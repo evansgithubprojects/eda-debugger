@@ -50,7 +50,7 @@ export function ActivityView({ nodeId }: { nodeId: string }) {
       <div className="table-wrap">
         <table className="activity-table">
           <thead>
-            <tr><th>Time</th><th></th><th>Event</th><th>Caused by</th><th>Took</th><th>Result</th><th>Data</th></tr>
+            <tr><th>Timestamp</th><th></th><th>Caller</th><th>Emitted from</th><th>Received Data</th><th>Took</th><th>Result</th></tr>
           </thead>
           <tbody>
             {rows.map((r, k) => {
@@ -62,12 +62,12 @@ export function ActivityView({ nodeId }: { nodeId: string }) {
                   <td><Badge tone="muted">{r.dir}</Badge></td>
                   <td>{eventLabel(index, r.i)}</td>
                   <td className="muted">{chain.length ? chain.map((c) => eventLabel(index, c)).join(' ▸ ') : 'root'}</td>
-                  <td>{r.ms !== undefined ? fmtMs(r.ms) : '—'}</td>
-                  <td>{r.error ? <span className="err">✕ {r.error}</span> : r.dir === 'handled' ? 'ok' : '—'}</td>
                   <td>
                     <CaptureBadge occ={r.i.occ} /> <FindingBadges findings={findings} />
                     {r.i.occ.capture === 'full' ? <Json value={r.i.occ.payload} /> : <code className="shape">{r.i.template.payloadShape}</code>}
                   </td>
+                  <td>{r.ms !== undefined ? fmtMs(r.ms) : '—'}</td>
+                  <td>{r.error ? <span className="err">✕ {r.error}</span> : r.dir === 'handled' ? 'ok' : '—'}</td>
                 </tr>
               );
             })}
