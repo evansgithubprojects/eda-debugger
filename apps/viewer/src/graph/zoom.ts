@@ -1,0 +1,93 @@
+export interface Rect { x: number; y: number; width: number; height: number }
+export interface Viewport { x: number; y: number; zoom: number }
+
+export const MIN_ZOOM = 0.2;
+export const MAX_ZOOM = 8;
+export const ZOOM_MS = 700;
+export const ACTIVITY_ZOOM_MS = 400;
+/** Space left around a freshly shown graph, as a fraction of the pane. */
+export const FIT_PADDING = 0.15;
+const STEPS = 24;
+
+export const prefersReducedMotion = () =>
+  typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+/** A duration, or 0 when the user asked for less motion. */
+export const motion = (ms: number) => (prefersReducedMotion() ? 0 : ms);
+
+/** The viewport that draws `flow` (flow coordinates) inside `screen` (pane pixels), centred and fully visible. */
+export function viewportForRect(flow: Rect, screen: Rect): Viewport {
+  const zoom = Math.min(screen.width / flow.width, screen.height / flow.height);
+  return {
+    zoom,
+    x: screen.x + screen.width / 2 - (flow.x + flow.width / 2) * zoom,
+    y: screen.y + screen.height / 2 - (flow.y + flow.height / 2) * zoom,
+  };
+}
+
+/** Where a flow-space rectangle lands on screen under `vp`. */
+export function rectOnScreen(flow: Rect, vp: Viewport): Rect {
+  return { x: flow.x * vp.zoom + vp.x, y: flow.y * vp.zoom + vp.y, width: flow.width * vp.zoom, height: flow.height * vp.zoom };
+}
+
+/** The viewport a graph opens at: all of `bounds` visible with some padding, zoom kept within the allowed range. */
+export function fitViewport(bounds: Rect, width: number, height: number, padding = FIT_PADDING): Viewport {
+  const inner = viewportForRect(bounds, { x: width * padding, y: height * padding, width: width * (1 - 2 * padding), height: height * (1 - 2 * padding) });
+  const zoom = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, inner.zoom));
+  return {
+    zoom,
+    x: width / 2 - (bounds.x + bounds.width / 2) * zoom,
+    y: height / 2 - (bounds.y + bounds.height / 2) * zoom,
+  };
+}
+
+const easeInOutCubic = (p: number) => (p < 0.5 ? 4 * p * p * p : 1 - Math.pow(-2 * p + 2, 3) / 2);
+const smooth = (a: number, b: number, p: number) => {
+  const x = Math.min(1, Math.max(0, (p - a) / (b - a)));
+  return x * x * (3 - 2 * x);
+};
+
+export interface Frame { offset: number; transform: string; opacity: number }
+
+export interface ZoomFrames {
+  /** The layer being zoomed into: it grows around `focus` and fades away. */
+  parent: Frame[];
+  /** The layer underneath: it starts small inside `focus` and grows to fill the pane. */
+  child: Frame[];
+  /** How far the parent is scaled at the end; the child starts at 1 / scale. */
+  scale: number;
+}
+
+/**
+ * One virtual camera drives both layers. `focus` is the card (in pane pixels) that gets zoomed into. At the
+ * start the child layer sits exactly inside it; at the end the child is untransformed and the card fills the
+ * pane. Transforms use origin 0 0, so x' = s·x + t. Play it backwards to zoom out.
+ */
+export function zoomFrames(focus: Rect, pane: { width: number; height: number }): ZoomFrames {
+  const ox = focus.x + focus.width / 2;
+  const oy = focus.y + focus.height / 2;
+  const cx = pane.width / 2;
+  const cy = pane.height / 2;
+  const k = Math.max(pane.width / focus.width, pane.height / focus.height);
+  const parent: Frame[] = [];
+  const child: Frame[] = [];
+  for (let i = 0; i <= STEPS; i++) {
+    const offset = i / STEPS;
+    const u = easeInOutCubic(offset);
+    const s = Math.pow(k, u);
+    const m = s / k;
+    parent.push({
+      offset,
+      transform: `translate(${ox * (1 - s) + (cx - ox) * u}px, ${oy * (1 - s) + (cy - oy) * u}px) scale(${s})`,
+      opacity: 1 - smooth(0.15, 0.75, offset),
+    });
+    child.push({
+      offset,
+      transform: `translate(${cx * (1 - m) + (ox - cx) * (1 - u)}px, ${cy * (1 - m) + (oy - cy) * (1 - u)}px) scale(${m})`,
+      opacity: smooth(0, 0.55, offset),
+    });
+  }
+  return { parent, child, scale: k };
+}
+
+export const toKeyframes = (frames: Frame[]): Keyframe[] => frames.map((f) => ({ offset: f.offset, transform: f.transform, opacity: f.opacity }));

@@ -1,0 +1,14 @@
+{
+  "name": "@eda-debugger/adapter-dom",
+  "version": "0.0.0",
+  "description": "DOM EventTarget adapter for the event chain debugger",
+  "type": "module",
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": { ".": { "types": "./dist/index.d.ts", "import": "./dist/index.js", "require": "./dist/index.cjs" } },
+  "files": ["dist"],
+  "scripts": { "build": "tsup" },
+  "dependencies": { "@eda-debugger/core": "*" },
+  "license": "MIT"
+}

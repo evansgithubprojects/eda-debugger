@@ -1,0 +1,35 @@
+{
+  "name": "@eda-debugger/adapter-node",
+  "version": "0.0.0",
+  "description": "Node EventEmitter adapter for the event chain debugger",
+  "type": "module",
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs"
+    },
+    "./auto": {
+      "types": "./dist/auto.d.ts",
+      "import": "./dist/auto.js",
+      "require": "./dist/auto.cjs"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsup"
+  },
+  "dependencies": {
+    "@eda-debugger/core": "*"
+  },
+  "license": "MIT",
+  "sideEffects": [
+    "./dist/auto.js",
+    "./dist/auto.cjs"
+  ]
+}

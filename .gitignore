@@ -1,0 +1,4 @@
+node_modules
+dist
+*.tsbuildinfo
+apps/viewer/public/samples/demo.json

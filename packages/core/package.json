@@ -1,0 +1,28 @@
+{
+  "name": "@eda-debugger/core",
+  "version": "0.0.0",
+  "description": "Event chain recorder: templates, causality, corruption detection, JSON export",
+  "type": "module",
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs"
+    },
+    "./bridge-node": {
+      "types": "./dist/bridge-node.d.ts",
+      "import": "./dist/bridge-node.js",
+      "require": "./dist/bridge-node.cjs"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsup"
+  },
+  "license": "MIT"
+}
