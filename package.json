@@ -8,9 +8,9 @@
     "apps/*"
   ],
   "scripts": {
-    "build": "npm run build -w @eda-debugger/core && npm run build -w @eda-debugger/adapter-node && npm run build -w @eda-debugger/adapter-dom",
+    "build": "npm run build -w @eda-debugger/core && npm run build -w @eda-debugger/adapter-eventemitter && npm run build -w @eda-debugger/adapter-eventtarget",
     "test": "vitest run",
-    "typecheck": "tsc --noEmit -p packages/core && tsc --noEmit -p packages/adapter-node && tsc --noEmit -p packages/adapter-dom && tsc --noEmit -p apps/viewer && tsc --noEmit -p apps/demo",
+    "typecheck": "tsc --noEmit -p packages/core && tsc --noEmit -p packages/adapter-eventemitter && tsc --noEmit -p packages/adapter-eventtarget && tsc --noEmit -p apps/viewer && tsc --noEmit -p apps/demo",
     "demo": "npm run build && npm run sim -w @eda-debugger/demo && npm run dev -w @eda-debugger/viewer",
     "demo:live": "npm run build && npm run live -w @eda-debugger/demo"
   },

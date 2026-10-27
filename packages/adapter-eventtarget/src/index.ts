@@ -1,6 +1,6 @@
 import { enable, type Recorder } from '@eda-debugger/core';
 
-export interface DomAdapterOptions {
+export interface EventTargetAdapterOptions {
   /** Return false to leave a target unrecorded. */
   include?: (target: EventTarget) => boolean;
   /** Process label for a target. Defaults to `window`, `document`, `tag#id` or the constructor name. */
@@ -29,7 +29,7 @@ export function describeTarget(t: EventTarget): string {
  * `handleEvent` objects, `removeEventListener`) is unchanged because the original methods still do the registering.
  * Returns `uninstall()`.
  */
-export function enableDomRecording(recorder: Recorder = enable(), options: DomAdapterOptions = {}): () => void {
+export function enableEventTargetRecording(recorder: Recorder = enable(), options: EventTargetAdapterOptions = {}): () => void {
   const proto = EventTarget.prototype;
   const { addEventListener, removeEventListener, dispatchEvent } = proto;
 

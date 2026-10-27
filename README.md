@@ -9,8 +9,8 @@ An event is **who called it and what it called, including payloads**. Handlers a
 | Package | What it does |
 | --- | --- |
 | `@eda-debugger/core` | Recorder, ring buffer, templates, causality, corruption detection, JSON export. No DOM dependency. |
-| `@eda-debugger/adapter-node` | Records Node `EventEmitter`. |
-| `@eda-debugger/adapter-dom` | Records DOM `EventTarget` (native events and `dispatchEvent`). |
+| `@eda-debugger/adapter-eventemitter` | Records Node `EventEmitter`. |
+| `@eda-debugger/adapter-eventtarget` | Records DOM `EventTarget` (native events and `dispatchEvent`). |
 | `apps/viewer` | Standalone React replay viewer. |
 | `apps/demo` | Simulated event stream and a browser page that produce recordings. |
 
@@ -18,10 +18,10 @@ An event is **who called it and what it called, including payloads**. Handlers a
 
 ```ts
 import { enable } from '@eda-debugger/core';
-import { enableNodeRecording } from '@eda-debugger/adapter-node';
+import { enableEventEmitterRecording } from '@eda-debugger/adapter-eventemitter';
 
 const recorder = enable({ windowMs: 60_000 });
-enableNodeRecording(recorder); // one line: patches EventEmitter.prototype.emit
+enableEventEmitterRecording(recorder); // one line: patches EventEmitter.prototype.emit
 
 // ... run your app ...
 fs.writeFileSync('recording.json', JSON.stringify(recorder.export()));

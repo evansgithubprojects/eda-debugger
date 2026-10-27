@@ -1,11 +1,11 @@
 import { createRecorder } from '@eda-debugger/core';
-import { enableDomRecording } from '@eda-debugger/adapter-dom';
+import { enableEventTargetRecording } from '@eda-debugger/adapter-eventtarget';
 
 const recorder = createRecorder({
   deepLogging: { events: ['cart:changed', 'order:placed'] },
   corruption: { notify: 'console' },
 });
-enableDomRecording(recorder, { label: (t) => (t === document ? 'Page' : undefined) });
+enableEventTargetRecording(recorder, { label: (t) => (t === document ? 'Page' : undefined) });
 
 const $ = (id: string) => document.getElementById(id) as HTMLElement;
 const log = (line: string) => ($('log').textContent += line + '\n');

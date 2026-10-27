@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { createRecorder } from '@eda-debugger/core';
-import { enableDomRecording } from '../src';
+import { enableEventTargetRecording } from '../src';
 
 let uninstall: (() => void) | undefined;
 afterEach(() => uninstall?.());
@@ -13,7 +13,7 @@ const names = (rec: ReturnType<typeof createRecorder>) => {
 describe('dom adapter', () => {
   it('records dispatchEvent with its handler and keeps listener semantics', () => {
     const rec = createRecorder();
-    uninstall = enableDomRecording(rec);
+    uninstall = enableEventTargetRecording(rec);
     const el = document.createElement('button');
     el.id = 'save';
     const calls: string[] = [];
@@ -31,7 +31,7 @@ describe('dom adapter', () => {
 
   it('honours removeEventListener and de-duplicates identical registrations', () => {
     const rec = createRecorder();
-    uninstall = enableDomRecording(rec);
+    uninstall = enableEventTargetRecording(rec);
     const el = document.createElement('div');
     let n = 0;
     const h = () => n++;
@@ -48,7 +48,7 @@ describe('dom adapter', () => {
 
   it('nests events dispatched from inside handlers', () => {
     const rec = createRecorder();
-    uninstall = enableDomRecording(rec);
+    uninstall = enableEventTargetRecording(rec);
     const a = document.createElement('div');
     const b = document.createElement('span');
     b.addEventListener('inner', function onInner() {});
@@ -61,7 +61,7 @@ describe('dom adapter', () => {
 
   it('creates one root occurrence per native event, shared by all its listeners', () => {
     const rec = createRecorder();
-    uninstall = enableDomRecording(rec);
+    uninstall = enableEventTargetRecording(rec);
     const el = document.createElement('button');
     document.body.append(el);
     let seen = 0;
@@ -79,7 +79,7 @@ describe('dom adapter', () => {
   it('records handler errors without changing behavior, and uninstall restores the prototype', () => {
     const original = EventTarget.prototype.addEventListener;
     const rec = createRecorder();
-    const un = enableDomRecording(rec);
+    const un = enableEventTargetRecording(rec);
     expect(EventTarget.prototype.addEventListener).not.toBe(original);
     // The platform reports an uncaught listener error to the window; that is expected here.
     window.addEventListener('error', (e) => e.preventDefault(), { once: true });

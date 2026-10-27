@@ -8,7 +8,7 @@ export default defineConfig({
   resolve: {
     alias: {
       '@eda-debugger/core': src('../../../packages/core/src/index.ts'),
-      '@eda-debugger/adapter-dom': src('../../../packages/adapter-dom/src/index.ts'),
+      '@eda-debugger/adapter-eventtarget': src('../../../packages/adapter-eventtarget/src/index.ts'),
     },
   },
   server: { port: 5174 },

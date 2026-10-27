@@ -9,7 +9,7 @@
     "dom": "vite browser"
   },
   "dependencies": {
-    "@eda-debugger/adapter-node": "*",
+    "@eda-debugger/adapter-eventemitter": "*",
     "@eda-debugger/core": "*"
   },
   "devDependencies": {

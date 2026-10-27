@@ -1,5 +1,5 @@
 {
-  "name": "@eda-debugger/adapter-dom",
+  "name": "@eda-debugger/adapter-eventtarget",
   "version": "0.0.0",
   "description": "DOM EventTarget adapter for the event chain debugger",
   "type": "module",

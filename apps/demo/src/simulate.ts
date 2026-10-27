@@ -2,7 +2,7 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { createRecorder } from '@eda-debugger/core';
 import { startBridge } from '@eda-debugger/core/bridge-node';
-import { enableNodeRecording } from '@eda-debugger/adapter-node';
+import { enableEventEmitterRecording } from '@eda-debugger/adapter-eventemitter';
 import { createShop } from './app';
 
 const live = process.argv.includes('--live');
@@ -12,7 +12,7 @@ const recorder = createRecorder({
   deepLogging: { events: ['order:confirmed', 'charge', 'notify'] },
   corruption: { notify: 'console', policy: block ? 'block' : 'notify' },
 });
-const uninstall = enableNodeRecording(recorder);
+const uninstall = enableEventEmitterRecording(recorder);
 const shop = createShop((e, name) => recorder.labelEmitter(e, name), (fn) => recorder.markExternal(fn));
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 

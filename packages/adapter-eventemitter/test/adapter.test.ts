@@ -1,7 +1,7 @@
 import { EventEmitter } from 'node:events';
 import { afterEach, describe, expect, it } from 'vitest';
 import { createRecorder } from '@eda-debugger/core';
-import { enableNodeRecording } from '../src';
+import { enableEventEmitterRecording } from '../src';
 
 let uninstall: (() => void) | undefined;
 afterEach(() => uninstall?.());
@@ -9,7 +9,7 @@ afterEach(() => uninstall?.());
 describe('node adapter', () => {
   it('records the parent chain across emitters', () => {
     const rec = createRecorder();
-    uninstall = enableNodeRecording(rec);
+    uninstall = enableEventEmitterRecording(rec);
     const a = new EventEmitter();
     const b = new EventEmitter();
     rec.labelEmitter(a, 'A');
@@ -24,7 +24,7 @@ describe('node adapter', () => {
 
   it('keeps emit semantics: order, return value, once, and error propagation', () => {
     const rec = createRecorder();
-    uninstall = enableNodeRecording(rec);
+    uninstall = enableEventEmitterRecording(rec);
     const e = new EventEmitter();
     const order: number[] = [];
     e.on('x', () => order.push(1));
@@ -43,7 +43,7 @@ describe('node adapter', () => {
 
   it('uninstall restores the original emit', () => {
     const original = EventEmitter.prototype.emit;
-    const un = enableNodeRecording(createRecorder());
+    const un = enableEventEmitterRecording(createRecorder());
     expect(EventEmitter.prototype.emit).not.toBe(original);
     un();
     expect(EventEmitter.prototype.emit).toBe(original);
@@ -52,7 +52,7 @@ describe('node adapter', () => {
   it('ignores Node internals such as streams by default', async () => {
     const { PassThrough } = await import('node:stream');
     const rec = createRecorder();
-    uninstall = enableNodeRecording(rec);
+    uninstall = enableEventEmitterRecording(rec);
     const s = new PassThrough();
     s.on('data', () => {});
     s.write('hi');
