@@ -174,6 +174,24 @@ export function chainOf(index: ReplayIndex, occurrenceId: string): IndexedOccurr
   return chain;
 }
 
+export type ChainStep = { kind: 'event'; item: IndexedOccurrence } | { kind: 'handler'; nodeId: string };
+
+/**
+ * The chain of events leading to `occurrenceId` with the handler that emitted each next event
+ * between them, root first. `truncated` means the root's parent was evicted from the buffer.
+ */
+export function callChain(index: ReplayIndex, occurrenceId: string): { steps: ChainStep[]; truncated: boolean } {
+  const chain = chainOf(index, occurrenceId);
+  const steps: ChainStep[] = [];
+  chain.forEach((item, k) => {
+    // A root's source is its own emitter, which the event label already names.
+    if (k > 0) steps.push({ kind: 'handler', nodeId: item.occ.sourceNodeId });
+    steps.push({ kind: 'event', item });
+  });
+  const parentId = chain[0]?.occ.parentId;
+  return { steps, truncated: !!parentId && !index.byId.has(parentId) };
+}
+
 export function eventLabel(index: ReplayIndex, item: IndexedOccurrence): string {
   const em = index.nodes.get(item.template.emitterId);
   return `${em?.label ?? '?'}.${item.template.eventName}`;

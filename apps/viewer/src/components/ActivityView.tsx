@@ -1,7 +1,7 @@
 import { useMemo } from 'react';
-import { chainOf, eventLabel, inWindow } from '../replay';
+import { callChain, eventLabel, inWindow } from '../replay';
 import { useStore } from '../store';
-import { Badge, CaptureBadge, FindingBadges, fmtMs, Json } from './common';
+import { Badge, CaptureBadge, EventRef, FindingBadges, fmtMs, HandlerRef, Json } from './common';
 
 /** Zoom level 3: everything one handler has been doing. */
 export function ActivityView({ nodeId }: { nodeId: string }) {
@@ -33,7 +33,7 @@ export function ActivityView({ nodeId }: { nodeId: string }) {
     <div className="activity activity-enter">
       <header>
         <button onClick={close}>← Back to graph</button>
-        <h2>{node.label}</h2>
+        <h2><HandlerRef>{node.label}</HandlerRef></h2>
         <Badge tone="muted">{index.processLabel.get(node.processId)}</Badge>
         <span className="muted">handled {handled.length} · emitted {rows.length - handled.length} · avg {fmtMs(avg)}</span>
         {errors.length > 0 && <Badge tone="error">✕ {errors.length} threw</Badge>}
@@ -50,18 +50,27 @@ export function ActivityView({ nodeId }: { nodeId: string }) {
       <div className="table-wrap">
         <table className="activity-table">
           <thead>
-            <tr><th>Timestamp</th><th></th><th>Caller</th><th>Emitted from</th><th>Received Data</th><th>Took</th><th>Result</th></tr>
+            <tr><th>Timestamp</th><th></th><th>Call chain</th><th>Received Data</th><th>Took</th><th>Result</th></tr>
           </thead>
           <tbody>
             {rows.map((r, k) => {
-              const chain = chainOf(index, r.i.occ.id).slice(0, -1);
+              const { steps, truncated } = callChain(index, r.i.occ.id);
               const findings = index.findingsByOcc.get(r.i.occ.id);
               return (
                 <tr key={k} className={r.error ? 'row-error' : ''} onClick={() => seek(r.i.occ.id)}>
                   <td>{fmtMs(r.i.occ.ts - index.start)}</td>
                   <td><Badge tone="muted">{r.dir}</Badge></td>
-                  <td>{eventLabel(index, r.i)}</td>
-                  <td className="muted">{chain.length ? chain.map((c) => eventLabel(index, c)).join(' ▸ ') : 'root'}</td>
+                  <td className="call-chain">
+                    {truncated && <span className="muted" title="Earlier events were evicted from the buffer">… ▸ </span>}
+                    {steps.map((s, n) => (
+                      <span key={n}>
+                        {n > 0 && <span className="muted"> ▸ </span>}
+                        {s.kind === 'handler'
+                          ? <HandlerRef>{index.nodes.get(s.nodeId)?.label ?? s.nodeId}</HandlerRef>
+                          : <span className={n === steps.length - 1 ? 'current-step' : ''}><EventRef>{eventLabel(index, s.item)}</EventRef></span>}
+                      </span>
+                    ))}
+                  </td>
                   <td>
                     <CaptureBadge occ={r.i.occ} /> <FindingBadges findings={findings} />
                     {r.i.occ.capture === 'full' ? <Json value={r.i.occ.payload} /> : <code className="shape">{r.i.template.payloadShape}</code>}

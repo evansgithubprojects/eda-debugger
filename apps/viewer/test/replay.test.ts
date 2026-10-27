@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { createRecorder, type Recording } from '@eda-debugger/core';
-import { activeAt, buildIndex, chainOf, edgeId } from '../src/replay';
+import { activeAt, buildIndex, callChain, chainOf, edgeId } from '../src/replay';
 
 function recordShop(): Recording {
   let t = 0;
@@ -82,5 +82,31 @@ describe('chainOf', () => {
     const index = buildIndex(recordShop());
     const last = index.items[index.items.length - 1]!;
     expect(chainOf(index, last.occ.id).map((i) => i.template.eventName)).toEqual(['go', 'pay']);
+  });
+});
+
+describe('callChain', () => {
+  it('puts the emitting handler between events', () => {
+    const rec = recordShop();
+    const index = buildIndex(rec);
+    const last = index.items[index.items.length - 1]!;
+    const { steps, truncated } = callChain(index, last.occ.id);
+    const label = (s: (typeof steps)[number]) => (s.kind === 'event' ? s.item.template.eventName : rec.nodes.find((n) => n.id === s.nodeId)!.label);
+    expect(steps.map(label)).toEqual(['go', expect.stringContaining('start'), 'pay']);
+    expect(truncated).toBe(false);
+  });
+
+  it('is a single step for a root event', () => {
+    const index = buildIndex(recordShop());
+    expect(callChain(index, index.items[0]!.occ.id).steps).toHaveLength(1);
+  });
+
+  it('flags a chain whose parent was evicted', () => {
+    const index = buildIndex(recordShop());
+    const last = index.items[index.items.length - 1]!;
+    index.byId.delete(last.occ.parentId!);
+    const { steps, truncated } = callChain(index, last.occ.id);
+    expect(steps).toHaveLength(1);
+    expect(truncated).toBe(true);
   });
 });

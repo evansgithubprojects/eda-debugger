@@ -3,7 +3,7 @@ import { useMemo } from 'react';
 import { useModel } from '../hooks';
 import { chainOf, countFired, eventLabel, inWindow, type IndexedOccurrence, type ReplayIndex } from '../replay';
 import { TRAIL_MAX, useStore, type Selection } from '../store';
-import { Badge, CaptureBadge, FindingBadges, fmtMs, Json, Section } from './common';
+import { Badge, CaptureBadge, EventRef, FindingBadges, fmtMs, HandlerRef, Json, Section } from './common';
 
 export function Inspector() {
   const index = useStore((s) => s.index)!;
@@ -36,6 +36,11 @@ function Crumbs({ index }: { index: ReplayIndex }) {
     const item = index.byId.get(t.id);
     return item ? eventLabel(index, item) : t.id;
   };
+  const labelNode = (t: NonNullable<Selection>) => {
+    if (t.type === 'node') return model?.nodes.find((n) => n.id === t.id)?.kind === 'process' ? label(t) : <HandlerRef>{label(t)}</HandlerRef>;
+    if (t.type === 'edge') return label(t);
+    return <EventRef>{label(t)}</EventRef>;
+  };
   const root = level.kind === 'handlers' ? index.processLabel.get(level.processId) ?? level.processId : 'Processes';
   return (
     <nav className="inspector-crumbs" aria-label="Inspection trail">
@@ -44,7 +49,7 @@ function Crumbs({ index }: { index: ReplayIndex }) {
       {trail.map((t, k) => (
         <span key={`${t.type}:${t.id}`} className="crumb">
           <span className="muted">›</span>
-          {k === trail.length - 1 ? <span className="current" title={label(t)}>{label(t)}</span> : <button onClick={() => select(t)} title={label(t)}>{label(t)}</button>}
+          {k === trail.length - 1 ? <span className="current" title={label(t)}>{labelNode(t)}</span> : <button onClick={() => select(t)} title={label(t)}>{labelNode(t)}</button>}
         </span>
       ))}
     </nav>
@@ -123,7 +128,7 @@ function NodeDetail({ index, id }: { index: ReplayIndex; id: string }) {
   }
   return (
     <>
-      <Section title={m.label} aside={<Badge tone="muted">{m.kind}</Badge>}>
+      <Section title={m.kind === 'process' || m.kind === 'stub' ? m.label : <HandlerRef>{m.label}</HandlerRef>} aside={<Badge tone="muted">{m.kind}</Badge>}>
         <dl className="facts">
           <dt>Process</dt><dd>{index.processLabel.get(m.processId)}</dd>
           <dt>Traffic</dt><dd>{m.detail}</dd>
@@ -135,7 +140,7 @@ function NodeDetail({ index, id }: { index: ReplayIndex; id: string }) {
       <Section title="Event templates" aside={templates.size}>
         <ul className="list">
           {[...templates.values()].map((t) => (
-            <li key={t.name + t.shape} className="tpl"><strong>{t.name}</strong><code>{t.shape}</code><span className="muted">{t.n}×</span></li>
+            <li key={t.name + t.shape} className="tpl"><strong><EventRef>{t.name}</EventRef></strong><code>{t.shape}</code><span className="muted">{t.n}×</span></li>
           ))}
         </ul>
       </Section>
@@ -159,8 +164,8 @@ function EdgeDetail({ index, id }: { index: ReplayIndex; id: string }) {
   return (
     <>
       <Section title="Pathway">
-        <p className="route"><button className="link" onClick={() => select({ type: 'node', id: edge.source })}>{label(edge.source)}</button> → <button className="link" onClick={() => select({ type: 'node', id: edge.target })}>{label(edge.target)}</button></p>
-        <dl className="facts"><dt>Events</dt><dd>{edge.events.join(', ')}</dd><dt>Fired</dt><dd>{countFired(edge.times, t, window[1])} of {edge.count}×</dd></dl>
+        <p className="route"><button className="link" onClick={() => select({ type: 'node', id: edge.source })}><HandlerRef>{label(edge.source)}</HandlerRef></button> → <button className="link" onClick={() => select({ type: 'node', id: edge.target })}><HandlerRef>{label(edge.target)}</HandlerRef></button></p>
+        <dl className="facts"><dt>Events</dt><dd>{edge.events.map((e, k) => <span key={e}>{k > 0 && ', '}<EventRef>{e}</EventRef></span>)}</dd><dt>Fired</dt><dd>{countFired(edge.times, t, window[1])} of {edge.count}×</dd></dl>
       </Section>
       <Section title="Occurrences" aside={items.length}>
         <ul className="list">
@@ -168,7 +173,7 @@ function EdgeDetail({ index, id }: { index: ReplayIndex; id: string }) {
             <li key={i.occ.id}>
               <button className="row" onClick={() => seek(i.occ.id)}>
                 <span className="row-head">
-                  <span>{eventLabel(index, i)}</span>
+                  <EventRef>{eventLabel(index, i)}</EventRef>
                   <span className="muted">{fmtMs(i.occ.ts - index.start)}</span>
                 </span>
                 <span className="row-badges">
@@ -194,17 +199,17 @@ export function OccurrenceDetail({ index, id }: { index: ReplayIndex; id: string
   const nodeLabel = (nid: string) => index.nodes.get(nid)?.label ?? nid;
   return (
     <>
-      <Section title={eventLabel(index, item)} aside={<CaptureBadge occ={item.occ} />}>
+      <Section title={<EventRef>{eventLabel(index, item)}</EventRef>} aside={<CaptureBadge occ={item.occ} />}>
         <dl className="facts">
           <dt>At</dt><dd>{fmtMs(item.occ.ts - index.start)} · took {fmtMs(item.occ.durationMs)}</dd>
-          <dt>Emitted by</dt><dd>{nodeLabel(item.occ.sourceNodeId)}</dd>
+          <dt>Emitted by</dt><dd><HandlerRef>{nodeLabel(item.occ.sourceNodeId)}</HandlerRef></dd>
           <dt>Causality</dt><dd>{item.occ.causality}</dd>
         </dl>
         <div className="chain" aria-label="Causal chain">
           {chain.map((c, k) => (
             <span key={c.occ.id}>
               {k > 0 && <span className="muted"> ▸ </span>}
-              <button className={`link ${c.occ.id === id ? 'current' : ''}`} onClick={() => seek(c.occ.id)}>{eventLabel(index, c)}</button>
+              <button className={`link ${c.occ.id === id ? 'current' : ''}`} onClick={() => seek(c.occ.id)}><EventRef>{eventLabel(index, c)}</EventRef></button>
             </span>
           ))}
         </div>
@@ -225,7 +230,7 @@ export function OccurrenceDetail({ index, id }: { index: ReplayIndex; id: string
         <ul className="list">
           {item.occ.handlerResults.map((r, k) => (
             <li key={k} className="tpl">
-              <strong>{nodeLabel(r.handlerId)}</strong>
+              <strong><HandlerRef>{nodeLabel(r.handlerId)}</HandlerRef></strong>
               <span className="muted">{fmtMs(r.durationMs)}</span>
               {r.error && <span className="err">✕ {r.error.name}: {r.error.message}</span>}
             </li>
@@ -259,8 +264,8 @@ function FindingCard({ index, finding }: { index: ReplayIndex; finding: Finding 
       )}
       {src && (
         <p className="hint">
-          Tainted by a failure in <strong>{index.nodes.get(finding.taintSource.handlerId)?.label}</strong>:{' '}
-          <button className="link" onClick={() => seek(src.occ.id)}>{eventLabel(index, src)}</button>
+          Tainted by a failure in <strong><HandlerRef>{index.nodes.get(finding.taintSource.handlerId)?.label}</HandlerRef></strong>:{' '}
+          <button className="link" onClick={() => seek(src.occ.id)}><EventRef>{eventLabel(index, src)}</EventRef></button>
         </p>
       )}
     </Section>

@@ -1,4 +1,6 @@
 :root {
+  --event: #b78cff;
+  --handler: #2dd4bf;
   color-scheme: dark;
   --bg: #0f1218;
   --panel: #161b24;
@@ -179,3 +181,10 @@ code, pre { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-si
 }
 
 .toast-more { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 6px 10px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--panel-2); font-size: 12.5px; }
+
+.entity-ref { display: inline-flex; align-items: center; gap: 5px; }
+.entity-icon { flex: none; fill: none; stroke-width: 1.4; stroke-linejoin: round; stroke-linecap: round; }
+.entity-event { stroke: var(--event); fill: color-mix(in srgb, var(--event) 35%, transparent); }
+.entity-handler { stroke: var(--handler); fill: color-mix(in srgb, var(--handler) 25%, transparent); }
+.call-chain { line-height: 1.8; }
+.call-chain .current-step { font-weight: 600; }

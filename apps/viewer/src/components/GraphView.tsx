@@ -12,6 +12,7 @@ import {
 import { useActive, useModel } from '../hooks';
 import { countFired, type Active } from '../replay';
 import { useStore } from '../store';
+import { HandlerRef } from './common';
 
 /**
  * Everything that changes while replaying lives in this context, not in the node/edge objects handed to
@@ -51,7 +52,7 @@ const NodeCard = memo(function NodeCard({ id }: NodeProps<RouteNode>) {
   return (
     <div className={cls.filter(Boolean).join(' ')} style={{ width: NODE_W, height: NODE_H, ['--lit' as string]: lit }}>
       <Handle type="target" position={Position.Left} isConnectable={false} style={hiddenHandle} />
-      <div className="node-title" title={model.label}>{model.label}</div>
+      <div className="node-title" title={model.label}>{model.kind === 'process' || model.kind === 'stub' ? model.label : <HandlerRef>{model.label}</HandlerRef>}</div>
       <div className="node-detail">{model.detail}</div>
       {thrown > 0 && <span className="corner corner-error" title={`${thrown} throw(s) so far`}>✕ {thrown}</span>}
       {flagged && (
