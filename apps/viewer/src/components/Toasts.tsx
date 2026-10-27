@@ -19,7 +19,7 @@ export function Toasts() {
         <div key={t.id} className={`toast ${t.sticky ? 'toast-high' : ''}`}>
           <div className="toast-head">
             {t.sticky && <Badge tone="external">EXTERNAL</Badge>}
-            <Badge tone="warn">⚠ suspected corrupt</Badge>
+            <Badge tone="warn">⚠ Corrupt Payload</Badge>
             <Badge tone="muted">{t.finding.confidence} confidence</Badge>
             {t.count > 1 && <Badge tone="muted" title="Times this has happened since you last dismissed it">×{t.count}</Badge>}
             <button className="icon" aria-label="Dismiss" onClick={() => dismiss(t.id)}>×</button>

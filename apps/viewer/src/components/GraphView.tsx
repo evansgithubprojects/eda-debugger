@@ -137,7 +137,7 @@ const RouteEdgeView = memo(function RouteEdgeView({ id, source, target }: EdgePr
         <div className={`edge-label ${selectedId === id ? 'selected' : ''}`} style={{ transform: `translate(-50%, -50%) translate(${lx}px, ${ly}px)` }}>
           <span title={`${edge.count} in this window`}>{countFired(edge.times, t, end)}</span>
           {thrown > 0 && <span className="mark mark-error" title="Throws on this route">✕{thrown}</span>}
-          {flagged && <span className={`mark mark-warn ${flagged.high ? 'high' : ''}`} title="Suspected corrupt payloads on this route">⚠{flagged.count}</span>}
+          {flagged && <span className="mark mark-warn" title={`Suspected corrupt payloads on this route${flagged.high ? ', some reaching an external system' : ''}`}>⚠{flagged.count}</span>}
         </div>
       </EdgeLabelRenderer>
     </>

@@ -22,7 +22,7 @@ export function FindingBadges({ findings }: { findings?: Finding[] }) {
   const high = findings.some((f) => f.priority === 'high');
   return (
     <>
-      <Badge tone="warn" title="Suspected corrupt payload">⚠ suspect</Badge>
+      <Badge tone="warn" title="Suspected corrupt payload">⚠ Corrupt Payload</Badge>
       {high && <Badge tone="external" title="Reaches an external system">EXTERNAL</Badge>}
     </>
   );
