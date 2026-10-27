@@ -10,52 +10,115 @@ import {
   type RecorderMessage, type Recording,
 } from './types';
 
+/** Called with each finding as it is raised. */
 export type FindingNotifier = (finding: Finding) => void;
 
+/** What to do with a suspect payload: `'notify'` lets the event continue, `'block'` stops it before any handler runs. */
+export type Policy = 'notify' | 'block';
+
 export interface CorruptionOptions extends EngineOptions {
-  /** Off by default. 'console' prints a warning; a function receives the finding; pass an array for both. */
+  /**
+   * Where findings are reported. `'console'` prints a warning (`console.error` for external systems); a function
+   * receives the finding; pass an array for both.
+   * @default undefined (nothing is printed or called; findings are still recorded)
+   * @example
+   * { notify: ['console', (f) => metrics.increment('corrupt_payload', { event: f.summary })] }
+   */
   notify?: 'console' | FindingNotifier | Array<'console' | FindingNotifier>;
-  /** 'notify' lets the event continue; 'block' throws from emit instead of calling any handler. */
-  policy?: 'notify' | 'block';
-  /** Policy for payloads headed to an external system. Defaults to `policy`. */
-  externalPolicy?: 'notify' | 'block';
+  /**
+   * 'notify' lets the event continue; 'block' throws a `SuspectedCorruptionError` from emit instead of calling
+   * any handler.
+   * @default 'notify'
+   */
+  policy?: Policy;
+  /**
+   * Policy for payloads headed to an external system.
+   * @default the value of `policy`
+   */
+  externalPolicy?: Policy;
   /**
    * What counts as an external system (HTTP APIs, databases, third parties). Corrupt payloads reaching these are
    * reported as high priority. Also see `recorder.markExternal()`.
+   * @example
+   * { external: { handlers: [postToBillingApi], events: ['db:write'] } }
    */
   external?: {
+    /** Event names, or a function of the event name and the emitter's label, that deliver to an external system. */
     events?: string[] | ((eventName: string, emitterLabel: string) => boolean);
+    /** Handler functions that talk to an external system. */
     handlers?: Function[];
+    /** Emitters whose every event is delivered to an external system. */
     emitters?: object[];
   };
 }
 
 export interface RecorderOptions {
+  /**
+   * How much history to keep, in milliseconds. Older events are dropped as new ones arrive.
+   * @default 300000 (5 minutes)
+   */
   windowMs?: number;
+  /**
+   * The most events to keep, whatever the window. The oldest are dropped first.
+   * @default 50000
+   */
   maxEvents?: number;
-  /** Deep logging: events listed here keep their full payload; all others are template-only. */
+  /**
+   * Deep logging: events listed here keep their full payload; all others are template-only.
+   * @default undefined (every event is template-only)
+   * @example
+   * { deepLogging: { events: ['order:confirmed'] } }
+   */
   deepLogging?: CaptureRule;
   /** Alias of deepLogging. */
   capture?: CaptureRule;
+  /**
+   * How events are grouped into templates. Receives the emitter, event name, handler set and payload shape.
+   * Return a coarser key to group more events together.
+   * @default defaultTemplateKey (emitter + event name + handler set + payload shape)
+   * @example
+   * { templateKey: (p) => `${p.emitterId}|${p.eventName}` } // ignore handlers and payload shape
+   */
   templateKey?: TemplateKeyFn;
+  /**
+   * Detection of suspected corrupt payloads. Findings are always recorded and shown in the viewer; this controls
+   * how they are reported and whether they block the event.
+   */
   corruption?: CorruptionOptions;
+  /**
+   * Tracks which event is being handled, so emits can point at their cause. Swap it to support async hops.
+   * @default SyncStackContext (synchronous causality only)
+   */
   context?: CausalityContext<Frame>;
+  /**
+   * Start recording straight away. When `false`, call `recorder.start()` first.
+   * @default true
+   */
   autoStart?: boolean;
+  /**
+   * The clock used for timestamps, in milliseconds.
+   * @default performance.now
+   */
   now?: () => number;
 }
 
+/** What an adapter hands the recorder for one emit. */
 export interface DispatchInfo {
+  /** The object the event was emitted on. It becomes a process in the graph. */
   emitter: object;
   /** Display name hint for the emitter's process, e.g. "Payments" or "button#save". */
   label?: string;
   eventName: string;
+  /** The listeners that will run, in order. Each becomes a handler node. */
   handlers: Function[];
+  /** The raw payload. It is only stored when the event is deep-logged. */
   payload: unknown;
 }
 
 /** Run one handler under the current event so emits inside it point back at it. */
 export type Invoke = <R>(handler: Function, call: () => R) => R;
 
+/** The "currently handling" entry kept by the causality context. For adapter and context authors. */
 export interface Frame {
   eventId: string;
   handlerId: string;
@@ -64,14 +127,37 @@ export interface Frame {
 }
 
 export interface Recorder {
+  /**
+   * For adapter authors: records one emit and runs it. `run` must call each listener through `invoke` so its timing,
+   * errors and emits are attributed to it. Returns whatever `run` returns.
+   */
   dispatch<T>(info: DispatchInfo, run: (invoke: Invoke) => T): T;
+  /** Resume recording. Events emitted while stopped are not recorded. */
   start(): void;
+  /** Pause recording. What was already recorded is kept. */
   stop(): void;
+  /** Whether events are currently being recorded. */
   readonly recording: boolean;
+  /** A snapshot of everything in the window as a versioned, JSON-serializable `Recording` for the viewer. */
   export(): Recording;
+  /** Forget everything recorded so far. */
   clear(): void;
+  /**
+   * Receive each new occurrence and finding as it happens.
+   * @returns a function that stops the subscription
+   */
   subscribe(listener: (message: RecorderMessage) => void): () => void;
+  /**
+   * Name an emitter's process in the viewer.
+   * @example
+   * recorder.labelEmitter(paymentsBus, 'Payments');
+   */
   labelEmitter(emitter: object, label: string): void;
+  /**
+   * Name a handler in the viewer. Without it, the function's own name is used.
+   * @example
+   * recorder.labelHandler(onOrder, 'charge card');
+   */
   labelHandler(fn: Function, label: string): void;
   /** Mark a handler function or a whole emitter as delivering to an external system. */
   markExternal(target: object | Function): void;
@@ -95,6 +181,13 @@ function normalizeNotify(n: CorruptionOptions['notify']): FindingNotifier[] {
   );
 }
 
+/**
+ * Creates a recorder. Adapters call `recorder.dispatch()` for you; you read the result with `recorder.export()`.
+ * Most apps want `enable()` instead, which shares one recorder with the adapters.
+ * @example
+ * const recorder = createRecorder({ windowMs: 60_000, deepLogging: { events: ['order:confirmed'] } });
+ * enableEventEmitterRecording(recorder);
+ */
 export function createRecorder(opts: RecorderOptions = {}): Recorder {
   const now = opts.now ?? (() => performance.now());
   const origin = now();

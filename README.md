@@ -8,9 +8,9 @@ An event is **who called it and what it called, including payloads**. Handlers a
 
 | Package | What it does |
 | --- | --- |
-| `@eda-debugger/core` | Recorder, ring buffer, templates, causality, corruption detection, JSON export. No DOM dependency. |
-| `@eda-debugger/adapter-eventemitter` | Records Node `EventEmitter`. |
-| `@eda-debugger/adapter-eventtarget` | Records DOM `EventTarget` (native events and `dispatchEvent`). |
+| [`@eda-debugger/core`](packages/core/README.md) | Recorder, ring buffer, templates, causality, corruption detection, JSON export. No DOM dependency. |
+| [`@eda-debugger/adapter-eventemitter`](packages/adapter-eventemitter/README.md) | Records Node `EventEmitter`. |
+| [`@eda-debugger/adapter-eventtarget`](packages/adapter-eventtarget/README.md) | Records DOM `EventTarget` (native events and `dispatchEvent`). |
 | `apps/viewer` | Standalone React replay viewer. |
 | `apps/demo` | Simulated event stream and a browser page that produce recordings. |
 

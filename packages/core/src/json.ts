@@ -11,6 +11,7 @@ export function isTag(v: unknown, kind?: string): v is { $eda: string } {
   );
 }
 
+/** @internal */
 export interface JsonSafeOptions {
   maxDepth?: number;
   maxKeys?: number;
@@ -18,6 +19,10 @@ export interface JsonSafeOptions {
   maxString?: number;
 }
 
+/**
+ * Converts any value to JSON-safe data, tagging what JSON can't carry and capping depth and size.
+ * @internal
+ */
 export function toJsonSafe(value: unknown, opts: JsonSafeOptions = {}): JsonValue {
   const { maxDepth = 6, maxKeys = 100, maxItems = 100, maxString = 2000 } = opts;
   const ancestors = new Set<object>();

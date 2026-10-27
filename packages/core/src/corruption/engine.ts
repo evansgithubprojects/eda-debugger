@@ -8,7 +8,10 @@ const MAX_EVENT_KEYS = 500;
 const MIN_UNTAINTED_BASELINE = 3;
 
 export interface EngineOptions extends Partial<TaintOptions> {
-  /** Also compare payloads that no failure points to; these findings have `taintSource: null`. On by default. */
+  /**
+   * Also flag suspect payloads that no failure points to; these findings have `taintSource: null`.
+   * @default true
+   */
   detectUntainted?: boolean;
 }
 
@@ -39,6 +42,7 @@ interface Sample {
  * Emits made by a recently failed handler/emitter, or forwarded from a flagged payload, are compared against
  * their baseline. Everything else is compared only under stricter rules (see `detectUntainted`) and otherwise
  * just feeds the baseline.
+ * @internal
  */
 export class CorruptionEngine {
   readonly taint: TaintTracker;

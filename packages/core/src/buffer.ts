@@ -1,4 +1,7 @@
-/** Append-only buffer evicted from the front by count and by time window. */
+/**
+ * Append-only buffer evicted from the front by count and by time window.
+ * @internal
+ */
 export class RingBuffer<T extends { ts: number }> {
   private items: T[] = [];
 

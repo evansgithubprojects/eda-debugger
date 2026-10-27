@@ -1,9 +1,21 @@
 import { enable, type Recorder } from '@eda-debugger/core';
 
+/** Call to restore the original `EventTarget` methods and stop recording. */
+export type Uninstall = () => void;
+
 export interface EventTargetAdapterOptions {
-  /** Return false to leave a target unrecorded. */
+  /**
+   * Return false to leave a target unrecorded.
+   * @example
+   * { include: (target) => target !== document.body }
+   */
   include?: (target: EventTarget) => boolean;
-  /** Process label for a target. Defaults to `window`, `document`, `tag#id` or the constructor name. */
+  /**
+   * Process label for a target. Return `undefined` to fall back to the default.
+   * @default `window`, `document`, `tag#id` or the constructor name (see `describeTarget`)
+   * @example
+   * { label: (t) => (t === document ? 'Page' : undefined) }
+   */
   label?: (target: EventTarget) => string | undefined;
 }
 
@@ -12,6 +24,7 @@ type Listener = EventListenerOrEventListenerObject;
 const call = (l: Listener, thisArg: unknown, event: Event) =>
   typeof l === 'function' ? l.call(thisArg, event) : l.handleEvent(event);
 
+/** The default process label for a target: `window`, `document`, `tag#id` / `tag.class`, or the constructor name. */
 export function describeTarget(t: EventTarget): string {
   const g = globalThis as { window?: unknown; document?: unknown };
   if (t === g.window) return 'window';
@@ -27,9 +40,13 @@ export function describeTarget(t: EventTarget): string {
  * Patches EventTarget so listeners are tracked per target and every dispatch is recorded: native events
  * (click, input, ...) and `dispatchEvent` alike. Listener behavior (order, `once`, `capture`, `passive`,
  * `handleEvent` objects, `removeEventListener`) is unchanged because the original methods still do the registering.
- * Returns `uninstall()`.
+ * @param recorder where to record; defaults to the shared recorder from `enable()`
+ * @param options which targets to record and how to label them
+ * @returns a function that restores the original methods
+ * @example
+ * const uninstall = enableEventTargetRecording(enable(), { label: (t) => (t === document ? 'Page' : undefined) });
  */
-export function enableEventTargetRecording(recorder: Recorder = enable(), options: EventTargetAdapterOptions = {}): () => void {
+export function enableEventTargetRecording(recorder: Recorder = enable(), options: EventTargetAdapterOptions = {}): Uninstall {
   const proto = EventTarget.prototype;
   const { addEventListener, removeEventListener, dispatchEvent } = proto;
 

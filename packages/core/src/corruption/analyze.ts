@@ -5,6 +5,11 @@ import type { Finding, Recording } from '../types';
 /**
  * Retroactive pass over a recording. Replays the same rules as the live guard in time order,
  * so it also finds payloads that were emitted before their handler threw.
+ * @param recording a recording from `recorder.export()` or a saved `recording.json`
+ * @param opts the same detection options as `RecorderOptions.corruption`
+ * @returns findings in time order
+ * @example
+ * const findings = analyze(JSON.parse(fs.readFileSync('recording.json', 'utf8')));
  */
 export function analyze(recording: Recording, opts: EngineOptions = {}): Finding[] {
   const engine = new CorruptionEngine(opts);

@@ -1,8 +1,36 @@
 # @eda-debugger/adapter-eventtarget
 
-Records DOM `EventTarget` activity, including native events such as clicks and `dispatchEvent`.
+Records DOM `EventTarget` activity, including native events such as clicks and `dispatchEvent`, with handlers, timings, errors and cause. Part of the [Event Chain Debugger](../../README.md).
+
+```bash
+npm install @eda-debugger/core @eda-debugger/adapter-eventtarget
+```
+
+## Setup
 
 ```ts
+import { enable } from '@eda-debugger/core';
 import { enableEventTargetRecording } from '@eda-debugger/adapter-eventtarget';
-const uninstall = enableEventTargetRecording(recorder, { label: (t) => (t === document ? 'Page' : undefined) });
+
+const recorder = enable();
+const uninstall = enableEventTargetRecording(recorder, {
+  label: (t) => (t === document ? 'Page' : undefined),
+});
 ```
+
+Your listeners behave exactly as before. Call `uninstall()` to stop recording.
+
+## `enableEventTargetRecording(recorder?, options?)`
+
+`recorder` defaults to the shared recorder from `enable()`. Returns an `Uninstall` function.
+
+| Option | Type | Default | Description |
+| --- | --- | --- | --- |
+| `include` | `(target) => boolean` | record all | Return `false` to leave a target unrecorded. |
+| `label` | `(target) => string \| undefined` | `describeTarget` | Process label for a target. Return `undefined` to use the default. |
+
+`describeTarget(target)` is exported: it gives `window`, `document`, `tag#id` / `tag.class`, or the constructor name.
+
+## Only listeners added after setup are recorded
+
+Call `enableEventTargetRecording` before your app registers listeners; ones added earlier are not recorded.

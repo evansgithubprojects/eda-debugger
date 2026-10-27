@@ -1,17 +1,36 @@
 import { createServer, type Server } from 'node:http';
 import type { Recorder } from './recorder';
 
+/** Options for `startBridge`. */
+export interface BridgeOptions {
+  /**
+   * Port to listen on. Use 0 to pick a free one.
+   * @default 7777
+   */
+  port?: number;
+  /**
+   * Interface to listen on. Keep it on loopback: the stream carries your event data.
+   * @default '127.0.0.1'
+   */
+  host?: string;
+}
+
+/** A running bridge. */
 export interface Bridge {
+  /** The port actually listening, which matters when `port: 0` was requested. */
   port: number;
+  /** Stop streaming and close every viewer connection. */
   close(): Promise<void>;
 }
 
 /**
  * Streams a recorder to viewers over Server-Sent Events: a snapshot on connect, then every new
  * occurrence and finding. (SSE needs no dependency and the browser reconnects by itself.)
- * Its http objects are streams, which the Node adapter ignores by default.
+ * @example
+ * const bridge = await startBridge(recorder);
+ * // open the viewer and press "Connect live"; later: await bridge.close();
  */
-export function startBridge(recorder: Recorder, opts: { port?: number; host?: string } = {}): Promise<Bridge> {
+export function startBridge(recorder: Recorder, opts: BridgeOptions = {}): Promise<Bridge> {
   const clients = new Set<import('node:http').ServerResponse>();
   const send = (res: import('node:http').ServerResponse, data: unknown) => res.write(`data: ${JSON.stringify(data)}\n\n`);
 

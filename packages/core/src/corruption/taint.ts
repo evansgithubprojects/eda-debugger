@@ -4,11 +4,20 @@ export interface TaintSource {
 }
 
 export interface TaintOptions {
-  /** How long a failure keeps the failing handler/emitter suspect. */
+  /**
+   * How long a failure keeps the failing handler/emitter suspect, in milliseconds.
+   * @default 1000
+   */
   taintWindowMs: number;
-  /** ...or for this many of its next emits, whichever runs out first. */
+  /**
+   * ...or for this many of its next emits, whichever runs out first.
+   * @default 5
+   */
   taintCount: number;
-  /** How many hops a flagged payload keeps tainting the events emitted because of it. */
+  /**
+   * How many hops a flagged payload keeps tainting the events emitted because of it.
+   * @default 1
+   */
   taintDepth: number;
 }
 

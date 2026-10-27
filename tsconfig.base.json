@@ -7,6 +7,7 @@
     "esModuleInterop": true,
     "skipLibCheck": true,
     "declaration": true,
+    "stripInternal": true,
     "noUncheckedIndexedAccess": true,
     "lib": ["ES2022"],
     "types": ["node"]

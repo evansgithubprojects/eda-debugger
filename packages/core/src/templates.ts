@@ -54,6 +54,7 @@ export type TemplateKeyFn = (parts: TemplateParts) => string;
 export const defaultTemplateKey: TemplateKeyFn = (p) =>
   [p.emitterId, p.eventName, [...p.handlerIds].sort().join(','), p.payloadShape].join('|');
 
+/** Interns templates by key and counts their occurrences. @internal */
 export class TemplateRegistry {
   private byKey = new Map<string, Template>();
   private byId = new Map<string, Template>();

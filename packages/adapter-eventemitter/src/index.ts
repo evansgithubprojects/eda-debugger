@@ -3,10 +3,20 @@ import { Server as NetServer } from 'node:net';
 import { Stream } from 'node:stream';
 import { enable, type Recorder } from '@eda-debugger/core';
 
+/** Call to restore the original `EventEmitter.prototype.emit` and stop recording. */
+export type Uninstall = () => void;
+
 export interface EventEmitterAdapterOptions {
-  /** Return false to leave an emitter unrecorded. Runs after the built-in ignore list. */
+  /**
+   * Return false to leave an emitter unrecorded. Runs after the built-in ignore list.
+   * @example
+   * { include: (emitter) => !(emitter instanceof MyNoisyBus) }
+   */
   include?: (emitter: EventEmitter) => boolean;
-  /** Also record Node internals (streams, sockets, servers, `process`). Noisy; off by default. */
+  /**
+   * Also record Node internals (streams, sockets, servers, `process`). Noisy.
+   * @default false
+   */
   includeInternals?: boolean;
 }
 
@@ -21,9 +31,15 @@ const isInternal = (e: EventEmitter): boolean =>
 
 /**
  * Patches `EventEmitter.prototype.emit` so every emit is recorded with its handlers, timings, errors and cause.
- * Behavior is unchanged: listeners run in the same order and errors propagate. Returns `uninstall()`.
+ * Behavior is unchanged: listeners run in the same order and errors propagate.
+ * @param recorder where to record; defaults to the shared recorder from `enable()`
+ * @param options which emitters to record
+ * @returns a function that restores the original `emit`
+ * @example
+ * const recorder = enable({ windowMs: 60_000 });
+ * const uninstall = enableEventEmitterRecording(recorder);
  */
-export function enableEventEmitterRecording(recorder: Recorder = enable(), options: EventEmitterAdapterOptions = {}): () => void {
+export function enableEventEmitterRecording(recorder: Recorder = enable(), options: EventEmitterAdapterOptions = {}): Uninstall {
   const proto = EventEmitter.prototype;
   const original = proto.emit;
 
