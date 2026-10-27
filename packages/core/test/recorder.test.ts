@@ -119,6 +119,7 @@ describe('corruption detection (live)', () => {
     const findings = rec.export().findings!;
     expect(findings).toHaveLength(1);
     expect(findings[0]).toMatchObject({ retroactive: true, basis: 'deep' });
+    expect(findings[0]!.taintSource).not.toBeNull();
     expect(found[0]).toContain('bad-value');
   });
 
@@ -152,7 +153,8 @@ describe('corruption detection (live)', () => {
     bus.emit('error', new Error('y'));
     for (let i = 0; i < 20; i++) bus.emit('noop');
     bus.emit('order:confirmed', { id: 'bad' });
-    expect(rec.export().findings).toHaveLength(0);
+    // Outside the taint window nothing points at the earlier error, so it is only flagged as having no source.
+    expect(rec.export().findings!.map((f) => f.taintSource)).toEqual([null]);
   });
 
   it('prints nothing when notify is off', () => {

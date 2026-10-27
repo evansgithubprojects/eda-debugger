@@ -5,8 +5,8 @@ export const MIN_ZOOM = 0.2;
 export const MAX_ZOOM = 8;
 export const ZOOM_MS = 700;
 export const ACTIVITY_ZOOM_MS = 400;
-/** Space left around a freshly shown graph, as a fraction of the pane. */
-export const FIT_PADDING = 0.15;
+/** Pixels left around a freshly shown graph, so the outermost nodes and their markers aren't clipped. */
+export const FIT_MARGIN = 24;
 const STEPS = 24;
 
 export const prefersReducedMotion = () =>
@@ -30,9 +30,10 @@ export function rectOnScreen(flow: Rect, vp: Viewport): Rect {
   return { x: flow.x * vp.zoom + vp.x, y: flow.y * vp.zoom + vp.y, width: flow.width * vp.zoom, height: flow.height * vp.zoom };
 }
 
-/** The viewport a graph opens at: all of `bounds` visible with some padding, zoom kept within the allowed range. */
-export function fitViewport(bounds: Rect, width: number, height: number, padding = FIT_PADDING): Viewport {
-  const inner = viewportForRect(bounds, { x: width * padding, y: height * padding, width: width * (1 - 2 * padding), height: height * (1 - 2 * padding) });
+/** The viewport a graph opens at: zoomed in as far as all of `bounds` still fits, within the allowed zoom range. */
+export function fitViewport(bounds: Rect, width: number, height: number, margin = FIT_MARGIN): Viewport {
+  const m = Math.min(margin, width / 4, height / 4);
+  const inner = viewportForRect(bounds, { x: m, y: m, width: width - 2 * m, height: height - 2 * m });
   const zoom = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, inner.zoom));
   return {
     zoom,
@@ -91,3 +92,32 @@ export function zoomFrames(focus: Rect, pane: { width: number; height: number })
 }
 
 export const toKeyframes = (frames: Frame[]): Keyframe[] => frames.map((f) => ({ offset: f.offset, transform: f.transform, opacity: f.opacity }));
+
+const SAVED_KEY = 'eda-debugger:viewport';
+
+/** The camera as it was when the page was last left, read once at load so later saves can't overwrite it first. */
+let fromLastLoad: { sig: string; viewport: Viewport } | null = (() => {
+  try {
+    const raw = sessionStorage.getItem(SAVED_KEY);
+    return raw ? JSON.parse(raw) : null;
+  } catch {
+    return null;
+  }
+})();
+
+/** Remembers where the camera is for the graph `sig`, so a reload can put it back. Per tab. */
+export function saveViewport(sig: string, viewport: Viewport): void {
+  try {
+    sessionStorage.setItem(SAVED_KEY, JSON.stringify({ sig, viewport }));
+  } catch {
+    /* storage unavailable: a reload just fits the graph */
+  }
+}
+
+/** The position saved before a reload, once, and only for the same graph; after that every graph opens fitted. */
+export function takeSavedViewport(sig: string): Viewport | null {
+  if (!fromLastLoad || fromLastLoad.sig !== sig) return null;
+  const { viewport } = fromLastLoad;
+  fromLastLoad = null;
+  return viewport;
+}

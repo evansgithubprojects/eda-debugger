@@ -1,12 +1,12 @@
 import { CorruptionEngine, type Observation } from './engine';
-import type { TaintOptions } from './taint';
+import type { EngineOptions } from './engine';
 import type { Finding, Recording } from '../types';
 
 /**
  * Retroactive pass over a recording. Replays the same rules as the live guard in time order,
  * so it also finds payloads that were emitted before their handler threw.
  */
-export function analyze(recording: Recording, opts: Partial<TaintOptions> = {}): Finding[] {
+export function analyze(recording: Recording, opts: EngineOptions = {}): Finding[] {
   const engine = new CorruptionEngine(opts);
   const templates = new Map(recording.templates.map((t) => [t.id, t]));
   const nodes = new Map(recording.nodes.map((n) => [n.id, n]));
@@ -57,7 +57,12 @@ export function analyze(recording: Recording, opts: Partial<TaintOptions> = {}):
     }
     engine.onError(step.handlerId, t.emitterId, step.occ.id, step.at);
     for (const child of children.get(`${step.occ.id}|${step.handlerId}`) ?? []) {
-      if (engine.isFlagged(child.id)) continue;
+      if (engine.isFlagged(child.id)) {
+        const at = findings.findIndex((f) => f.occurrenceId === child.id);
+        const updated = at >= 0 && engine.attribute(findings[at]!, { occurrenceId: step.occ.id, handlerId: step.handlerId });
+        if (updated) findings[at] = updated;
+        continue;
+      }
       const obs = observation(child);
       const finding = obs && engine.observe(obs, { occurrenceId: step.occ.id, handlerId: step.handlerId });
       if (finding) findings.push({ ...finding, retroactive: true });

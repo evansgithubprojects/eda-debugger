@@ -1,5 +1,6 @@
 import type { Finding, Occurrence } from '@eda-debugger/core';
 import type { ReactNode } from 'react';
+import { callChain, eventLabel, type ReplayIndex } from '../replay';
 
 export const fmtMs = (ms: number) => (ms >= 1000 ? `${(ms / 1000).toFixed(2)}s` : `${ms.toFixed(ms < 10 ? 2 : 0)}ms`);
 
@@ -62,5 +63,59 @@ export function Section({ title, children, aside }: { title: ReactNode; children
       <h3>{title}{aside && <span className="aside">{aside}</span>}</h3>
       {children}
     </section>
+  );
+}
+
+/**
+ * Events with the handler that emitted each next one between them, root first. `threw` marks the handler (or, when
+ * it isn't a step, the emitter) that threw with a ✕ after its name.
+ */
+export function CallChain({ index, occurrenceId, threw, tail }: { index: ReplayIndex; occurrenceId: string; threw?: string; tail?: ReactNode[] }) {
+  const { steps, truncated } = callChain(index, occurrenceId);
+  const marked = steps.findIndex((s) => s.kind === 'handler' && s.nodeId === threw);
+  const markAt = marked >= 0 ? marked : steps.findIndex((s) => s.kind === 'event' && s.item.template.emitterId === threw);
+  const error = <span className="chain-error" title="Threw the error this is traced to"> ✕</span>;
+  const parts: ReactNode[] = steps.map((s, n) => (
+    <span key={n} className={n === steps.length - 1 && s.kind === 'event' ? 'current-step' : ''}>
+      {s.kind === 'handler'
+        ? <HandlerRef>{index.nodes.get(s.nodeId)?.label ?? s.nodeId}</HandlerRef>
+        : <EventRef>{eventLabel(index, s.item)}</EventRef>}
+      {n === markAt && error}
+    </span>
+  ));
+  parts.push(...(tail ?? []));
+  return (
+    <span className="call-chain">
+      {truncated && <span className="muted" title="Earlier events were evicted from the buffer">… ▸ </span>}
+      {parts.map((p, n) => <span key={n}>{n > 0 && <span className="muted"> ▸ </span>}{p}</span>)}
+    </span>
+  );
+}
+
+// Values JSON cannot carry are stored as { $eda: 'NaN' | 'undefined' | ... }.
+export const shortValue = (v: unknown) => {
+  if (typeof v === 'object' && v !== null && typeof (v as { $eda?: unknown }).$eda === 'string') return (v as { $eda: string }).$eda;
+  const s = v === undefined ? 'undefined' : JSON.stringify(v);
+  return s.length > 60 ? s.slice(0, 57) + '…' : s;
+};
+
+/**
+ * A flagged payload: each flagged field with the value that was sent, then the call chain it travelled (✕ on the
+ * method that threw, if any) out to its recipients. The external badge is shown separately.
+ */
+export function FindingSummary({ index, finding }: { index: ReplayIndex; finding: Finding }) {
+  const item = index.byId.get(finding.occurrenceId);
+  const recipients = finding.externalTargets.length
+    ? finding.externalTargets.map((t) => <span key={t}>{t}</span>)
+    : (item?.template.handlerIds ?? []).map((id) => <HandlerRef key={id}>{index.nodes.get(id)?.label ?? id}</HandlerRef>);
+  return (
+    <span className="finding-summary">
+      {finding.diff.length > 0 && (
+        <code className="flagged">{finding.diff.map((d) => `${d.path || 'payload'}: ${shortValue(d.actual)}`).join('\n')}</code>
+      )}
+      {item
+        ? <CallChain index={index} occurrenceId={item.occ.id} threw={finding.taintSource?.handlerId} tail={recipients} />
+        : <span className="muted">event no longer recorded</span>}
+    </span>
   );
 }

@@ -1,7 +1,7 @@
 import { useMemo } from 'react';
-import { callChain, eventLabel, inWindow } from '../replay';
+import { eventLabel, inWindow } from '../replay';
 import { useStore } from '../store';
-import { Badge, CaptureBadge, EventRef, FindingBadges, fmtMs, HandlerRef, Json } from './common';
+import { Badge, CallChain, CaptureBadge, FindingBadges, fmtMs, HandlerRef, Json } from './common';
 
 /** Zoom level 3: everything one handler has been doing. */
 export function ActivityView({ nodeId }: { nodeId: string }) {
@@ -54,23 +54,12 @@ export function ActivityView({ nodeId }: { nodeId: string }) {
           </thead>
           <tbody>
             {rows.map((r, k) => {
-              const { steps, truncated } = callChain(index, r.i.occ.id);
               const findings = index.findingsByOcc.get(r.i.occ.id);
               return (
                 <tr key={k} className={r.error ? 'row-error' : ''} onClick={() => seek(r.i.occ.id)}>
                   <td>{fmtMs(r.i.occ.ts - index.start)}</td>
                   <td><Badge tone="muted">{r.dir}</Badge></td>
-                  <td className="call-chain">
-                    {truncated && <span className="muted" title="Earlier events were evicted from the buffer">… ▸ </span>}
-                    {steps.map((s, n) => (
-                      <span key={n}>
-                        {n > 0 && <span className="muted"> ▸ </span>}
-                        {s.kind === 'handler'
-                          ? <HandlerRef>{index.nodes.get(s.nodeId)?.label ?? s.nodeId}</HandlerRef>
-                          : <span className={n === steps.length - 1 ? 'current-step' : ''}><EventRef>{eventLabel(index, s.item)}</EventRef></span>}
-                      </span>
-                    ))}
-                  </td>
+                  <td><CallChain index={index} occurrenceId={r.i.occ.id} /></td>
                   <td>
                     <CaptureBadge occ={r.i.occ} /> <FindingBadges findings={findings} />
                     {r.i.occ.capture === 'full' ? <Json value={r.i.occ.payload} /> : <code className="shape">{r.i.template.payloadShape}</code>}

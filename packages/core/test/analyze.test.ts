@@ -26,10 +26,31 @@ describe('analyze', () => {
     expect(again[0]!.retroactive).toBe(true);
   });
 
-  it('never flags untainted occurrences, even odd ones', () => {
+  it('flags a corrupt payload with no error thrown, without a source error', () => {
     const { rec, send } = build();
-    send('ok', { id: 'weird', n: 9999, tags: [] });
-    expect(analyze(rec.export())).toEqual([]);
+    send('ok', { id: 'weird', n: 'nine', tags: [] });
+    const [f] = rec.export().findings!;
+    expect(f!.taintSource).toBeNull();
+    expect(f!.confidence).not.toBe('high');
+    expect(f!.summary).toContain('no error thrown');
+    expect(analyze(rec.export()).map((x) => x.occurrenceId)).toEqual([f!.occurrenceId]);
+  });
+
+  it('does not flag clean traffic or events without enough baseline', () => {
+    const { rec, send } = build();
+    send('ok', { id: 'a200', n: 7, tags: ['x'] });
+    send('fresh', { whatever: true });
+    expect(rec.export().findings ?? []).toEqual([]);
+  });
+
+  it('can leave untainted payloads alone', () => {
+    let t = 0;
+    const rec = createRecorder({ deepLogging: { events: ['ok'] }, now: () => (t += 1), corruption: { detectUntainted: false } });
+    const emitter = {};
+    const send = (payload: unknown) => rec.dispatch({ emitter, label: 'P', eventName: 'ok', handlers: [], payload }, () => {});
+    for (let i = 0; i < 6; i++) send({ id: `a${100 + i}`, n: i, tags: ['x'] });
+    send({ id: 'weird', n: 'nine', tags: [] });
+    expect(analyze(rec.export(), { detectUntainted: false })).toEqual([]);
   });
 
   it('detects missing fields, empties, outliers, formats and stale payloads after an error event', () => {

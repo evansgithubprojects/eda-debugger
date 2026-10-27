@@ -188,3 +188,14 @@ code, pre { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-si
 .entity-handler { stroke: var(--handler); fill: color-mix(in srgb, var(--handler) 25%, transparent); }
 .call-chain { line-height: 1.8; }
 .call-chain .current-step { font-weight: 600; }
+
+.source-error { text-align: left; line-height: 1.5; }
+.row:disabled { cursor: default; opacity: .7; }
+.finding-summary { display: flex; flex-direction: column; gap: 3px; }
+.finding-summary .flagged { display: block; white-space: pre-wrap; padding: 4px 8px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--panel-2); }
+.chain-error { color: #ff8a96; font-weight: 700; }
+.node-card.focused { animation: focus-pulse 1.6s ease-out; }
+@keyframes focus-pulse {
+  0%, 40% { box-shadow: 0 0 0 4px var(--accent); }
+  100% { box-shadow: 0 0 0 0 transparent; }
+}

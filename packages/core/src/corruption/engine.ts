@@ -4,6 +4,13 @@ import type { Finding, JsonValue } from '../types';
 
 const MAX_SAMPLES = 20;
 const MAX_EVENT_KEYS = 500;
+/** Clean observations an event needs before a payload with no failure behind it is compared to its baseline. */
+const MIN_UNTAINTED_BASELINE = 3;
+
+export interface EngineOptions extends Partial<TaintOptions> {
+  /** Also compare payloads that no failure points to; these findings have `taintSource: null`. On by default. */
+  detectUntainted?: boolean;
+}
 
 /** Everything the detector needs to know about one emit. */
 export interface Observation {
@@ -29,18 +36,23 @@ interface Sample {
 
 /**
  * Shared by the live guard (runs before handlers are called) and the retroactive `analyze()`.
- * Only emits made by a recently failed handler/emitter, or forwarded from a flagged payload, are compared;
- * everything else just feeds the baseline.
+ * Emits made by a recently failed handler/emitter, or forwarded from a flagged payload, are compared against
+ * their baseline. Everything else is compared only under stricter rules (see `detectUntainted`) and otherwise
+ * just feeds the baseline.
  */
 export class CorruptionEngine {
   readonly taint: TaintTracker;
   private samples = new Map<string, Sample[]>();
   private shapes = new Map<string, string[]>();
+  private clean = new Map<string, number>();
   private flaggedIds = new Set<string>();
+  private unattributed = new Set<string>();
+  private detectUntainted: boolean;
   private seq = 0;
 
-  constructor(opts: Partial<TaintOptions> = {}) {
-    this.taint = new TaintTracker({ ...defaultTaintOptions, ...opts });
+  constructor({ detectUntainted = true, ...taint }: EngineOptions = {}) {
+    this.taint = new TaintTracker({ ...defaultTaintOptions, ...taint });
+    this.detectUntainted = detectUntainted;
   }
 
   onError(handlerId: string | null, emitterId: string, occurrenceId: string, ts: number): void {
@@ -60,7 +72,7 @@ export class CorruptionEngine {
     if (forced) this.forget(eventKey, o.occurrenceId);
 
     const info = this.taint.check(o, forced);
-    if (!info) {
+    if (!info && !(this.detectUntainted && (this.clean.get(eventKey) ?? 0) >= MIN_UNTAINTED_BASELINE)) {
       this.learn(eventKey, o);
       return null;
     }
@@ -75,28 +87,42 @@ export class CorruptionEngine {
       result = checkShapes(o.shape, this.shapes.get(eventKey) ?? []);
     }
 
+    // Without a failure behind it, a changed shape alone is normal variation; it takes a clearly bad value.
+    if (!info && basis === 'shape' && !result?.reasons.some((r) => r.code === 'bad-value')) result = null;
+
     if (!result) {
       this.learn(eventKey, o);
       return null;
     }
 
-    this.taint.markFlagged(o.occurrenceId, info);
+    if (info) this.taint.markFlagged(o.occurrenceId, info);
+    else this.unattributed.add(o.occurrenceId);
     this.flaggedIds.add(o.occurrenceId);
     return {
       id: `f${++this.seq}`,
       kind: 'suspected-corrupt',
       occurrenceId: o.occurrenceId,
       ts: o.ts,
-      confidence: basis === 'shape' ? 'low' : result.confidence,
+      confidence: basis === 'shape' ? 'low' : !info && result.confidence === 'high' ? 'medium' : result.confidence,
       basis,
       reasons: result.reasons,
       diff: result.diff,
-      taintSource: info.source,
+      taintSource: info?.source ?? null,
       retroactive: false,
       priority: o.externalTargets?.length ? 'high' : 'normal',
       externalTargets: o.externalTargets ?? [],
-      summary: `${o.externalTargets?.length ? `EXTERNAL (${o.externalTargets.join(', ')}) ` : ''}suspected corrupt payload for ${o.label}: ${result.reasons.map((r) => r.message).join('; ')}`,
+      summary: `${o.externalTargets?.length ? `EXTERNAL (${o.externalTargets.join(', ')}) ` : ''}suspected corrupt payload for ${o.label}${info ? '' : ' (no error thrown)'}: ${result.reasons.map((r) => r.message).join('; ')}`,
     };
+  }
+
+  /**
+   * A payload flagged with no error behind it turns out to have been emitted inside an invocation that then threw.
+   * Returns the finding re-pointed at that failure, or null when `finding` wasn't waiting for one.
+   */
+  attribute(finding: Finding, source: TaintSource): Finding | null {
+    if (!this.unattributed.delete(finding.occurrenceId)) return null;
+    this.taint.markFlagged(finding.occurrenceId, { source, depth: 0 });
+    return { ...finding, taintSource: source, retroactive: true, summary: finding.summary.replace(' (no error thrown)', '') };
   }
 
   clear(): void {
@@ -104,6 +130,8 @@ export class CorruptionEngine {
     this.samples.clear();
     this.shapes.clear();
     this.flaggedIds.clear();
+    this.unattributed.clear();
+    this.clean.clear();
   }
 
   private learn(eventKey: string, o: Observation): void {
@@ -111,7 +139,9 @@ export class CorruptionEngine {
       const oldest = this.shapes.keys().next().value as string;
       this.shapes.delete(oldest);
       this.samples.delete(oldest);
+      this.clean.delete(oldest);
     }
+    this.clean.set(eventKey, (this.clean.get(eventKey) ?? 0) + 1);
     const shapes = this.shapes.get(eventKey) ?? [];
     if (!shapes.includes(o.shape)) shapes.push(o.shape);
     this.shapes.set(eventKey, shapes.slice(-20));

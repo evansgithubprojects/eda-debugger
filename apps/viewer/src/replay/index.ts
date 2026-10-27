@@ -1,4 +1,6 @@
 import type { Finding, GraphNode, Occurrence, Recording, Template } from '@eda-debugger/core';
+import { compareRank, findingRank, throwRank, tierOf, type Rank, type Tier } from './severity';
+export type { Tier } from './severity';
 
 /** A route an occurrence travelled: source node -> one receiving node. */
 export interface Hop {
@@ -21,6 +23,9 @@ export interface ReplayIndex {
   nodes: Map<string, GraphNode>;
   processLabel: Map<string, string>;
   findingsByOcc: Map<string, Finding[]>;
+  findingsById: Map<string, Finding>;
+  /** Findings traced to a throw, keyed by `throwId`. */
+  findingsBySource: Map<string, Finding[]>;
   start: number;
   end: number;
 }
@@ -28,12 +33,30 @@ export interface ReplayIndex {
 /** Resolves a raw node id to the id shown at the current zoom level, or null to hide it. */
 export type MapNode = (nodeId: string) => string | null;
 
+/** Identifies one handler's failure while handling one occurrence. */
+export const throwId = (occurrenceId: string, handlerId: string) => `${occurrenceId}|${handlerId}`;
+
+/** Splits a `throwId` back into its parts; occurrence ids may themselves contain the separator. */
+export function parseThrowId(index: ReplayIndex, id: string): { occurrenceId: string; handlerId: string } | null {
+  for (let at = id.indexOf('|'); at >= 0; at = id.indexOf('|', at + 1)) {
+    if (index.byId.has(id.slice(0, at))) return { occurrenceId: id.slice(0, at), handlerId: id.slice(at + 1) };
+  }
+  return null;
+}
+
 export function buildIndex(recording: Recording): ReplayIndex {
   const templates = new Map(recording.templates.map((t) => [t.id, t]));
   const nodes = new Map(recording.nodes.map((n) => [n.id, n]));
   const findingsByOcc = new Map<string, Finding[]>();
+  const findingsById = new Map<string, Finding>();
+  const findingsBySource = new Map<string, Finding[]>();
   for (const f of recording.findings ?? []) {
     findingsByOcc.set(f.occurrenceId, [...(findingsByOcc.get(f.occurrenceId) ?? []), f]);
+    findingsById.set(f.id, f);
+    if (f.taintSource) {
+      const key = throwId(f.taintSource.occurrenceId, f.taintSource.handlerId);
+      findingsBySource.set(key, [...(findingsBySource.get(key) ?? []), f]);
+    }
   }
   const items: IndexedOccurrence[] = [];
   for (const occ of [...recording.occurrences].sort((a, b) => a.ts - b.ts)) {
@@ -54,7 +77,7 @@ export function buildIndex(recording: Recording): ReplayIndex {
   return {
     recording, items, byId: new Map(items.map((i) => [i.occ.id, i])), nodes,
     processLabel: new Map(recording.processes.map((p) => [p.id, p.label])),
-    findingsByOcc, start, end,
+    findingsByOcc, findingsById, findingsBySource, start, end,
   };
 }
 
@@ -195,4 +218,71 @@ export function callChain(index: ReplayIndex, occurrenceId: string): { steps: Ch
 export function eventLabel(index: ReplayIndex, item: IndexedOccurrence): string {
   const em = index.nodes.get(item.template.emitterId);
   return `${em?.label ?? '?'}.${item.template.eventName}`;
+}
+
+export interface Notification {
+  /** Selection id: a `throwId` for throws, the finding id for findings. */
+  id: string;
+  kind: 'throw' | 'finding';
+  occurrenceId: string;
+  rank: Rank;
+  tier: Tier;
+  text: string;
+  external: boolean;
+  /** Set for findings with no error thrown. */
+  unattributed: boolean;
+  /** Set for findings, which render their own summary. */
+  finding?: Finding;
+}
+
+/** Throws and findings among `items`, most severe first. */
+export function notifications(index: ReplayIndex, items: IndexedOccurrence[]): Notification[] {
+  const out: Notification[] = [];
+  for (const i of items) {
+    for (const th of i.throws) {
+      const id = throwId(i.occ.id, th.handlerId);
+      const rank = throwRank(index.findingsBySource.get(id) ?? [], th.at);
+      out.push({ id, kind: 'throw', occurrenceId: i.occ.id, rank, tier: tierOf(rank.score), text: `${index.nodes.get(th.handlerId)?.label} threw: ${th.message}`, external: rank.external, unattributed: false });
+    }
+    for (const f of index.findingsByOcc.get(i.occ.id) ?? []) {
+      const rank = findingRank(f);
+      out.push({ id: f.id, kind: 'finding', occurrenceId: i.occ.id, rank, tier: tierOf(rank.score), text: f.summary, external: rank.external, unattributed: !f.taintSource, finding: f });
+    }
+  }
+  return out.sort((a, b) => compareRank(a.rank, b.rank));
+}
+
+export interface Recipient {
+  label: string;
+  external: boolean;
+  /** Corrupted payloads delivered here. */
+  count: number;
+  /** The node to show on the graph for this recipient. */
+  nodeId?: string;
+}
+
+/** Where `findings` were sent: external systems first, then by how many payloads each received. */
+export function recipientsOf(index: ReplayIndex, findings: Finding[]): Recipient[] {
+  const byLabel = new Map<string, Recipient>();
+  const add = (label: string, external: boolean, nodeId?: string) => {
+    const key = `${external}:${label}`;
+    const have = byLabel.get(key);
+    if (have) have.count++;
+    else byLabel.set(key, { label, external, count: 1, nodeId });
+  };
+  for (const f of findings) {
+    const item = index.byId.get(f.occurrenceId);
+    const external = new Set(f.externalTargets);
+    // An external system is usually a handler marked external; otherwise it hangs off the event's emitter.
+    for (const label of external) {
+      const handler = item?.template.handlerIds.find((id) => index.nodes.get(id)?.label === label);
+      add(label, true, handler ?? item?.template.emitterId);
+    }
+    // Events nobody listens to dead-end at their own emitter; that isn't a recipient.
+    for (const dst of item?.template.handlerIds ?? []) {
+      const label = index.nodes.get(dst)?.label ?? dst;
+      if (!external.has(label)) add(label, false, dst);
+    }
+  }
+  return [...byLabel.values()].sort((a, b) => Number(b.external) - Number(a.external) || b.count - a.count || a.label.localeCompare(b.label));
 }

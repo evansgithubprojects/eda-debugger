@@ -1,6 +1,7 @@
 import type { Finding, RecorderMessage, Recording } from '@eda-debugger/core';
 import { create } from 'zustand';
 import type { Level } from './graph/model';
+import { ZOOM_MS } from './graph/zoom';
 import { buildIndex, type ReplayIndex } from './replay';
 
 export const SPEEDS = [0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2, 4];
@@ -11,7 +12,14 @@ export const FLASH_WALL_MS = 900;
 /** How many steps of the inspection trail the inspector keeps. */
 export const TRAIL_MAX = 8;
 
-export type Selection = { type: 'node'; id: string } | { type: 'edge'; id: string } | { type: 'occurrence'; id: string } | null;
+/** A `throw` id is `<occurrenceId>|<handlerId>`; see `throwId`. */
+export type Selection =
+  | { type: 'node'; id: string }
+  | { type: 'edge'; id: string }
+  | { type: 'occurrence'; id: string }
+  | { type: 'throw'; id: string }
+  | { type: 'finding'; id: string }
+  | null;
 
 export interface Toast {
   id: number;
@@ -39,6 +47,8 @@ interface State {
   /** Everything inspected at this zoom level, oldest first; `selection` is always its last entry. */
   trail: NonNullable<Selection>[];
   toasts: Toast[];
+  /** A node the graph should pan to and pulse; `seq` makes repeat requests for the same node count. */
+  focus: { nodeId: string; seq: number } | null;
   live: LiveStatus;
   following: boolean;
 
@@ -54,7 +64,11 @@ interface State {
   closeActivity(): void;
   select(selection: Selection): void;
   seekToOccurrence(id: string): void;
+  /** Inspect a throw or finding: moves the replay to its occurrence and opens its inspector. */
+  selectIssue(issue: { type: 'throw' | 'finding'; id: string }, occurrenceId: string): void;
   dismissToast(id: number): void;
+  /** Zooms into the node's process if needed, then pans the graph to it and highlights it. */
+  focusNode(rawNodeId: string): void;
   dismissAllToasts(): void;
   connectLive(url: string): void;
   disconnectLive(): void;
@@ -134,7 +148,7 @@ export const useStore = create<State>()((set, get) => {
 
   return {
     recording: null, index: null, sourceName: '', t: 0, playing: false, speed: 1, window: [0, 0],
-    level: { kind: 'process' }, activityNodeId: null, selection: null, trail: [], toasts: [], live: 'off', following: true,
+    level: { kind: 'process' }, activityNodeId: null, selection: null, trail: [], toasts: [], focus: null, live: 'off', following: true,
 
     load(recording, name) {
       get().disconnectLive();
@@ -178,8 +192,40 @@ export const useStore = create<State>()((set, get) => {
         trail: extendTrail(get().trail, { type: 'occurrence', id }),
       });
     },
+    selectIssue(issue, occurrenceId) {
+      const item = get().index?.byId.get(occurrenceId);
+      if (!item) return;
+      const [w0, w1] = get().window;
+      set({
+        t: item.occ.ts, playing: false, following: false,
+        window: [Math.min(w0, item.occ.ts), Math.max(w1, item.occ.ts)],
+        selection: issue,
+        trail: extendTrail(get().trail, issue),
+      });
+    },
     dismissToast(id) { set((s) => ({ toasts: s.toasts.filter((t) => t.id !== id) })); },
     dismissAllToasts() { set({ toasts: [] }); },
+    focusNode(nodeId) {
+      const { index, level, focus } = get();
+      const processId = index?.nodes.get(nodeId)?.processId;
+      // Handlers are only drawn inside their process. Throws and findings mean the same thing at every level,
+      // so inspecting one survives the zoom; node and edge selections belong to the level being left.
+      const zoom = !!processId && (level.kind !== 'handlers' || level.processId !== processId);
+      const seq = (focus?.seq ?? 0) + 1;
+      set((s) => {
+        const keep = s.selection?.type === 'throw' || s.selection?.type === 'finding';
+        return {
+          focus: { nodeId, seq },
+          ...(zoom && {
+            level: { kind: 'handlers', processId: processId! } as Level,
+            activityNodeId: null,
+            selection: keep ? s.selection : null,
+            trail: keep ? s.trail.filter((t) => t.type === 'throw' || t.type === 'finding') : [],
+          }),
+        };
+      });
+      setTimeout(() => { if (get().focus?.seq === seq) set({ focus: null }); }, 1600 + (zoom ? ZOOM_MS : 0));
+    },
 
     connectLive(url) {
       get().disconnectLive();
@@ -195,10 +241,13 @@ export const useStore = create<State>()((set, get) => {
           flush();
           set({ sourceName: `live · ${url}` });
         } else if (msg.type === 'finding') {
-          pushToast(msg.finding);
           const base = pending ?? get().recording;
-          if (base && !(base.findings ?? []).some((f) => f.id === msg.finding.id)) {
-            pending = { ...base, findings: [...(base.findings ?? []), msg.finding] };
+          // A finding re-sent under the same id is an existing one that was traced to its source error.
+          const known = (base?.findings ?? []).some((f) => f.id === msg.finding.id);
+          if (!known) pushToast(msg.finding);
+          if (base) {
+            const list = base.findings ?? [];
+            pending = { ...base, findings: known ? list.map((f) => (f.id === msg.finding.id ? msg.finding : f)) : [...list, msg.finding] };
             schedule();
           }
         } else if (msg.type === 'occurrence') {

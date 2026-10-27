@@ -24,6 +24,10 @@ async function scenario() {
       await sleep(live ? 150 : 2);
     }
   }
+  shop.checkout(44, 'rounding-bug'); // no error thrown, but a wrong-typed total reaches the ledger API
+  await sleep(live ? 400 : 20);
+  shop.checkout(45, 'bad-address'); // no error thrown, an internal notification loses its recipient
+  await sleep(live ? 400 : 20);
   shop.checkout(41, 'chargeback'); // handler emits partial data, then throws
   await sleep(live ? 400 : 20);
   shop.checkout(37, 'fraud-risk'); // handler reports an error, then keeps going with NaN

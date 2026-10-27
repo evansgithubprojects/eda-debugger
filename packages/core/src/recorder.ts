@@ -1,7 +1,7 @@
 import { RingBuffer } from './buffer';
 import { matchesCapture, type CaptureRule } from './capture';
 import { SyncStackContext, type CausalityContext } from './causality';
-import { CorruptionEngine, SuspectedCorruptionError, type Observation, type TaintOptions } from './corruption';
+import { CorruptionEngine, SuspectedCorruptionError, type EngineOptions, type Observation } from './corruption';
 import { Registry } from './ids';
 import { toJsonSafe } from './json';
 import { payloadShape, TemplateRegistry, type TemplateKeyFn } from './templates';
@@ -12,7 +12,7 @@ import {
 
 export type FindingNotifier = (finding: Finding) => void;
 
-export interface CorruptionOptions extends Partial<TaintOptions> {
+export interface CorruptionOptions extends EngineOptions {
   /** Off by default. 'console' prints a warning; a function receives the finding; pass an array for both. */
   notify?: 'console' | FindingNotifier | Array<'console' | FindingNotifier>;
   /** 'notify' lets the event continue; 'block' throws from emit instead of calling any handler. */
@@ -195,7 +195,15 @@ export function createRecorder(opts: RecorderOptions = {}): Recorder {
         result.error = toErrorInfo(err);
         engine.onError(node.id, emitter.node.id, id, now() - origin);
         for (const child of handlerFrame.children) {
-          if (engine.isFlagged(child.occurrenceId)) continue;
+          if (engine.isFlagged(child.occurrenceId)) {
+            const at = findings.findIndex((f) => f.occurrenceId === child.occurrenceId);
+            const updated = at >= 0 && engine.attribute(findings[at]!, { occurrenceId: id, handlerId: node.id });
+            if (updated) {
+              findings[at] = updated;
+              emit({ type: 'finding', finding: updated });
+            }
+            continue;
+          }
           const late = engine.observe(child, { occurrenceId: id, handlerId: node.id });
           if (late) report({ ...late, retroactive: true });
         }

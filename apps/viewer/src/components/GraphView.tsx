@@ -7,7 +7,7 @@ import { createContext, memo, useContext, useEffect, useLayoutEffect, useMemo, u
 import { layout, layoutBounds, NODE_H, NODE_W, type Positions } from '../graph/layout';
 import { processNodeId, type Level, type ModelEdge, type ModelNode } from '../graph/model';
 import {
-  ACTIVITY_ZOOM_MS, fitViewport, MAX_ZOOM, MIN_ZOOM, motion, rectOnScreen, toKeyframes, ZOOM_MS, zoomFrames, type Rect, type Viewport,
+  ACTIVITY_ZOOM_MS, fitViewport, MAX_ZOOM, saveViewport, takeSavedViewport, MIN_ZOOM, motion, rectOnScreen, toKeyframes, ZOOM_MS, zoomFrames, type Rect, type Viewport,
 } from '../graph/zoom';
 import { useActive, useModel } from '../hooks';
 import { countFired, type Active } from '../replay';
@@ -24,6 +24,8 @@ interface ViewState {
   edges: Map<string, ModelEdge>;
   active: Active;
   selectedId: string | null;
+  /** Briefly set after a "show on graph" request. */
+  focusedId: string | null;
   /** Playhead and the end of the replay window, for the pathway counters. */
   t: number;
   end: number;
@@ -41,14 +43,14 @@ const RING_ID = '__ring';
 const hiddenHandle = { opacity: 0, pointerEvents: 'none' } as const;
 
 const NodeCard = memo(function NodeCard({ id }: NodeProps<RouteNode>) {
-  const { nodes, active, selectedId } = useView();
+  const { nodes, active, selectedId, focusedId } = useView();
   const model = nodes.get(id);
   if (!model) return null;
   const lit = active.litNodes.get(id) ?? 0;
   const flashing = active.flashingNodes.has(id);
   const thrown = active.thrownNodes.get(id) ?? 0;
   const flagged = active.flaggedNodes.get(id);
-  const cls = ['node-card', `kind-${model.kind}`, flashing && 'flash', thrown > 0 && 'has-thrown', flagged && 'has-flagged', selectedId === id && 'selected'];
+  const cls = ['node-card', `kind-${model.kind}`, flashing && 'flash', thrown > 0 && 'has-thrown', flagged && 'has-flagged', selectedId === id && 'selected', focusedId === id && 'focused'];
   return (
     <div className={cls.filter(Boolean).join(' ')} style={{ width: NODE_W, height: NODE_H, ['--lit' as string]: lit }}>
       <Handle type="target" position={Position.Left} isConnectable={false} style={hiddenHandle} />
@@ -175,6 +177,7 @@ function GraphLayer({ layerKey, level, size, geometry, refit, onZoomHandler }: L
   const end = useStore((s) => s.window[1]);
   const selection = useStore((s) => s.selection);
   const select = useStore((s) => s.select);
+  const focus = useStore((s) => s.focus);
   const setLevel = useStore((s) => s.setLevel);
   const { setViewport } = useReactFlow<AnyNode, RouteEdge>();
 
@@ -190,7 +193,8 @@ function GraphLayer({ layerKey, level, size, geometry, refit, onZoomHandler }: L
   );
 
   // The camera is ours to place, so a transition can compute where every node is on screen without measuring.
-  const [initialViewport] = useState<Viewport>(() => (lay ? fitViewport(layoutBounds(lay), size.width, size.height) : { x: 0, y: 0, zoom: 1 }));
+  // After a reload the camera goes back where it was; otherwise the whole graph is fitted.
+  const [initialViewport] = useState<Viewport>(() => (lay ? takeSavedViewport(sig) ?? fitViewport(layoutBounds(lay), size.width, size.height) : { x: 0, y: 0, zoom: 1 }));
   const camera = useRef<Viewport>(initialViewport);
   useLayoutEffect(() => {
     if (!lay) return;
@@ -202,10 +206,21 @@ function GraphLayer({ layerKey, level, size, geometry, refit, onZoomHandler }: L
   useEffect(() => {
     if (first.current) { first.current = false; return; }
     if (!lay || !refit) return;
-    camera.current = fitViewport(layoutBounds(lay), size.width, size.height);
+    camera.current = takeSavedViewport(sig) ?? fitViewport(layoutBounds(lay), size.width, size.height);
     void setViewport(camera.current, { duration: 0 });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sig]);
+
+  // Only the layer on top answers focus requests, and not mid-zoom: a request that zoomed in lands once it's done.
+  const focusedId = focus && refit && model ? model.mapNode(focus.nodeId) : null;
+  useEffect(() => {
+    const p = focusedId ? lay?.positions.get(focusedId) : undefined;
+    if (!p) return;
+    const zoom = Math.max(camera.current.zoom, 1);
+    camera.current = { zoom, x: size.width / 2 - (p.x + NODE_W / 2) * zoom, y: size.height / 2 - (p.y + NODE_H / 2) * zoom };
+    void setViewport(camera.current, { duration: motion(400) });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [focus?.seq, refit]);
 
   // Stable objects: only a new layout produces new ones.
   const nodes = useMemo<AnyNode[]>(() => {
@@ -235,9 +250,9 @@ function GraphLayer({ layerKey, level, size, geometry, refit, onZoomHandler }: L
   const view = useMemo<ViewState | null>(
     () => (model && active ? {
       nodes: new Map(model.nodes.map((n) => [n.id, n])), edges: new Map(model.edges.map((e) => [e.id, e])), active,
-      selectedId: selection && selection.type !== 'occurrence' ? selection.id : null, t, end,
+      selectedId: selection && selection.type !== 'occurrence' ? selection.id : null, focusedId, t, end,
     } : null),
-    [model, active, selection, t, end],
+    [model, active, selection, focusedId, t, end],
   );
 
   if (!model || !view || !lay) return null;
@@ -252,7 +267,7 @@ function GraphLayer({ layerKey, level, size, geometry, refit, onZoomHandler }: L
         edgeTypes={edgeTypes}
         colorMode="dark"
         defaultViewport={initialViewport}
-        onMoveEnd={(_, vp) => { camera.current = vp; }}
+        onMoveEnd={(_, vp) => { camera.current = vp; if (refit) saveViewport(sig, vp); }}
         minZoom={MIN_ZOOM}
         maxZoom={MAX_ZOOM}
         zoomOnDoubleClick={false}

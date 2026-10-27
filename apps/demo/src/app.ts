@@ -32,6 +32,16 @@ export function createShop(label: (e: EventEmitter, name: string) => void, markE
       payments.emit('order:confirmed', { id: order.id, total: undefined, items: order.items });
       throw new Error('gateway timeout');
     }
+    if (order.items.includes('rounding-bug')) {
+      // Scripted bug 3: no error at all, just a wrong type heading to the ledger API.
+      payments.emit('order:confirmed', { id: order.id, total: String(order.total), items: order.items });
+      return;
+    }
+    if (order.items.includes('bad-address')) {
+      // Scripted bug 4: no error either; the customer notification loses its recipient.
+      notifier.emit('notify', { to: undefined, text: '' });
+      return;
+    }
     payments.emit('order:confirmed', { id: order.id, total: order.total, items: order.items });
   });
   payments.on('charge', function fraudCheck(order: { id: string; total: number; items: string[] }) {

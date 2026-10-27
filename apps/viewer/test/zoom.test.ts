@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { fitViewport, MAX_ZOOM, MIN_ZOOM, rectOnScreen, viewportForRect, zoomFrames } from '../src/graph/zoom';
+import { FIT_MARGIN, fitViewport, MAX_ZOOM, MIN_ZOOM, rectOnScreen, viewportForRect, zoomFrames } from '../src/graph/zoom';
 
 /** Parses "translate(Xpx, Ypx) scale(S)". */
 function parse(transform: string) {
@@ -25,13 +25,14 @@ describe('zoom helpers', () => {
     for (const k of ['x', 'y', 'width', 'height'] as const) expect(landed[k]).toBeCloseTo(screen[k]);
   });
 
-  it('fits a graph with padding, centred, within the zoom limits', () => {
+  it('fits a graph as large as the pane allows, centred, within the zoom limits', () => {
     const bounds = { x: -300, y: -300, width: 600, height: 600 };
     const vp = fitViewport(bounds, 1000, 800);
     const landed = rectOnScreen(bounds, vp);
     expect(landed.x + landed.width / 2).toBeCloseTo(500);
     expect(landed.y + landed.height / 2).toBeCloseTo(400);
     expect(landed.height).toBeLessThan(800);
+    expect(landed.height).toBeCloseTo(800 - 2 * FIT_MARGIN);
     expect(fitViewport({ x: 0, y: 0, width: 1, height: 1 }, 1000, 800).zoom).toBe(MAX_ZOOM);
     expect(fitViewport({ x: 0, y: 0, width: 1e6, height: 1e6 }, 1000, 800).zoom).toBe(MIN_ZOOM);
   });

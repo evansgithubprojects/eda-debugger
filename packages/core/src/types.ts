@@ -94,7 +94,8 @@ export interface Finding {
   basis: 'deep' | 'shape';
   reasons: Reason[];
   diff: DiffEntry[];
-  taintSource: { occurrenceId: string; handlerId: string };
+  /** The failure this payload is suspected to come from; null when it was flagged with no error thrown. */
+  taintSource: { occurrenceId: string; handlerId: string } | null;
   /** Found after the fact (the payload was emitted before the handler threw). */
   retroactive: boolean;
   summary: string;
