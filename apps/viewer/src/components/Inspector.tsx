@@ -207,17 +207,15 @@ function NodeDetail({ index, id }: { index: ReplayIndex; id: string }) {
   const avg = handled.length ? handled.reduce((n, r) => n + (r.ms ?? 0), 0) / handled.length : 0;
   const threw = items.reduce((n, i) => n + i.throws.filter((t) => !t.rethrown && model?.mapNode(t.handlerId) === id).length, 0);
   // An event can land in both lists when the node sends it to itself (or, for a process, between its own handlers).
-  const receiving = new Map<string, { key: string; shape: string; n: number }>();
-  const sending = new Map<string, { key: string; shape: string; n: number }>();
+  // Counted per event, not per template: payloads belong to the run and pathway inspectors, not here.
+  const receiving = new Map<string, number>();
+  const sending = new Map<string, number>();
   for (const i of items) {
     const lists = [];
     if (i.hops.some((h) => model?.mapNode(h.dst) === id)) lists.push(receiving);
     if (model?.mapNode(i.occ.sourceNodeId) === id) lists.push(sending);
-    for (const templates of lists) {
-      const e = templates.get(i.template.id) ?? { key: eventKey(i.template), shape: i.template.payloadShape, n: 0 };
-      e.n++;
-      templates.set(i.template.id, e);
-    }
+    const key = eventKey(i.template);
+    for (const events of lists) events.set(key, (events.get(key) ?? 0) + 1);
   }
   return (
     <>
@@ -230,8 +228,8 @@ function NodeDetail({ index, id }: { index: ReplayIndex; id: string }) {
         </dl>
         {(m.kind === 'process' || m.kind === 'stub') && <button className="primary" onClick={() => setLevel({ kind: 'handlers', processId: m.processId })}>Zoom into process</button>}
       </Section>
-      <TemplateList title="Receiving" templates={receiving} />
-      <TemplateList title="Sending" templates={sending} />
+      <EventList title="Receiving" events={receiving} />
+      <EventList title="Sending" events={sending} />
       {runs && <ActivitySection index={index} runs={runs} window={window} />}
     </>
   );
@@ -345,13 +343,14 @@ function RunDetail({ index, id }: { index: ReplayIndex; id: string }) {
   );
 }
 
-function TemplateList({ title, templates }: { title: string; templates: Map<string, { key: string; shape: string; n: number }> }) {
+/** Events and how often each occurred, by `eventKey`. */
+function EventList({ title, events }: { title: string; events: Map<string, number> }) {
   return (
-    <Section title={title} aside={templates.size}>
-      {templates.size === 0 ? <p className="muted">none in this window</p> : (
+    <Section title={title} aside={events.size}>
+      {events.size === 0 ? <p className="muted">none in this window</p> : (
         <ul className="list">
-          {[...templates.values()].map((t) => (
-            <li key={t.key + t.shape} className="tpl"><strong><EventLink id={t.key} /></strong><code>{t.shape}</code><span className="muted">{t.n}×</span></li>
+          {[...events].map(([key, n]) => (
+            <li key={key} className="tpl"><strong><EventLink id={key} /></strong><span className="muted">{n}×</span></li>
           ))}
         </ul>
       )}
