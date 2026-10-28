@@ -67,6 +67,23 @@ describe('recorder', () => {
     expect(o!.handlerResults[0]!.error).toMatchObject({ name: 'Error', message: 'nope' });
   });
 
+  it('counts an error that propagates through several handlers as one', () => {
+    const rec = createRecorder();
+    const a = new Bus(rec, 'A');
+    const b = new Bus(rec, 'B');
+    b.on('charge', function chargeCard() { throw new Error('gateway timeout'); });
+    a.on('checkout', function startPayment() { b.emit('charge'); });
+    expect(() => a.emit('checkout')).toThrow('gateway timeout');
+    const out = rec.export();
+    const node = (label: string) => out.nodes.find((n) => n.label === label)!.id;
+    const occ = (name: string) => out.occurrences.find((o) => out.templates.find((t) => t.id === o.templateId)!.eventName === name)!;
+    const inner = occ('charge').handlerResults[0]!;
+    const outer = occ('checkout').handlerResults[0]!;
+    expect(inner.rethrown).toBeUndefined();
+    expect(outer.error).toMatchObject({ message: 'gateway timeout' });
+    expect(outer.rethrown).toEqual({ occurrenceId: occ('charge').id, handlerId: node('chargeCard') });
+  });
+
   it('evicts old occurrences and their templates, and survives a JSON round trip', () => {
     const rec = createRecorder({ maxEvents: 2 });
     const a = new Bus(rec, 'A');
@@ -121,6 +138,22 @@ describe('corruption detection (live)', () => {
     expect(findings[0]).toMatchObject({ retroactive: true, basis: 'deep' });
     expect(findings[0]!.taintSource).not.toBeNull();
     expect(found[0]).toContain('bad-value');
+  });
+
+  it('attributes a payload emitted before a propagated throw to where it was first thrown', () => {
+    const { rec, bus, order } = setup();
+    const other = new Bus(rec, 'Other');
+    bus.on('pay', function charge() {
+      bus.emit('order:confirmed', { ...order(7), total: undefined });
+      throw new Error('gateway down');
+    });
+    other.on('start', function start() { bus.emit('pay'); });
+    expect(() => other.emit('start')).toThrow('gateway down');
+    const out = rec.export();
+    const pay = out.occurrences.find((o) => out.templates.find((t) => t.id === o.templateId)!.eventName === 'pay')!;
+    const charge = out.nodes.find((n) => n.label.startsWith('charge'))!.id;
+    expect(out.findings).toHaveLength(1);
+    expect(out.findings![0]!.taintSource).toEqual({ occurrenceId: pay.id, handlerId: charge });
   });
 
   it('flags an emit that follows an error event, before handlers run, and can block it', () => {

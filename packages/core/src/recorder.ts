@@ -203,6 +203,8 @@ export function createRecorder(opts: RecorderOptions = {}): Recorder {
   const policy = opts.corruption?.policy ?? 'notify';
   const externalPolicy = opts.corruption?.externalPolicy ?? policy;
   const externalRule = opts.corruption?.external;
+  /** Where each thrown error object was first seen, so one that propagates through several handlers stays one error. */
+  const thrownAt = new WeakMap<object, { occurrenceId: string; handlerId: string }>();
   const externalHandlers = new WeakSet<object>(externalRule?.handlers ?? []);
   const externalEmitters = new WeakSet<object>(externalRule?.emitters ?? []);
   const listeners = new Set<(m: RecorderMessage) => void>();
@@ -286,18 +288,26 @@ export function createRecorder(opts: RecorderOptions = {}): Recorder {
         return ctx.run(handlerFrame, call);
       } catch (err) {
         result.error = toErrorInfo(err);
-        engine.onError(node.id, emitter.node.id, id, now() - origin);
+        const trackable = typeof err === 'object' && err !== null;
+        const first = trackable ? thrownAt.get(err) : undefined;
+        const source = first ?? { occurrenceId: id, handlerId: node.id };
+        if (first) {
+          result.rethrown = first;
+        } else {
+          if (trackable) thrownAt.set(err, source);
+          engine.onError(node.id, emitter.node.id, id, now() - origin);
+        }
         for (const child of handlerFrame.children) {
           if (engine.isFlagged(child.occurrenceId)) {
             const at = findings.findIndex((f) => f.occurrenceId === child.occurrenceId);
-            const updated = at >= 0 && engine.attribute(findings[at]!, { occurrenceId: id, handlerId: node.id });
+            const updated = at >= 0 && engine.attribute(findings[at]!, source);
             if (updated) {
               findings[at] = updated;
               emit({ type: 'finding', finding: updated });
             }
             continue;
           }
-          const late = engine.observe(child, { occurrenceId: id, handlerId: node.id });
+          const late = engine.observe(child, source);
           if (late) report({ ...late, retroactive: true });
         }
         throw err;

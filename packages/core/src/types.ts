@@ -61,6 +61,11 @@ export interface HandlerResult {
   durationMs: number;
   /** Set when the handler threw. */
   error?: ErrorInfo;
+  /**
+   * Set when `error` is not new: an earlier handler threw this same error, and it propagated out of an emit made
+   * while this handler ran. Points at the first place it was thrown, which is the one failure it counts as.
+   */
+  rethrown?: { occurrenceId: string; handlerId: string };
 }
 
 /** One recorded emit: who called it, what it reached, and when. */
