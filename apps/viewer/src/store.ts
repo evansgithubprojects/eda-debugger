@@ -62,7 +62,8 @@ interface State {
   setLevel(level: Level): void;
   openActivity(rawNodeId: string): void;
   closeActivity(): void;
-  select(selection: Selection): void;
+  /** `fromGraph` marks a click on the graph itself: everything drawn there sits directly under the level, so it starts a new trail. */
+  select(selection: Selection, opts?: { fromGraph?: boolean }): void;
   seekToOccurrence(id: string): void;
   /** Inspect a throw or finding: moves the replay to its occurrence and opens its inspector. */
   selectIssue(issue: { type: 'throw' | 'finding'; id: string }, occurrenceId: string): void;
@@ -76,10 +77,16 @@ interface State {
 
 const sameSelection = (a: NonNullable<Selection>, b: NonNullable<Selection>) => a.type === b.type && a.id === b.id;
 
-/** Inspecting something already on the trail goes back to it; anything new is added to the end. */
+/**
+ * Inspecting something already on the trail goes back to it. Something of the same kind as the last step is a sibling
+ * of it (another node on the graph, another event in the chain, another finding on the occurrence), so it takes that
+ * step's place; anything else is added to the end.
+ */
 export function extendTrail(trail: NonNullable<Selection>[], next: NonNullable<Selection>): NonNullable<Selection>[] {
   const at = trail.findIndex((t) => sameSelection(t, next));
-  return at >= 0 ? trail.slice(0, at + 1) : [...trail, next].slice(-TRAIL_MAX);
+  if (at >= 0) return trail.slice(0, at + 1);
+  const base = trail.length && trail[trail.length - 1]!.type === next.type ? trail.slice(0, -1) : trail;
+  return [...base, next].slice(-TRAIL_MAX);
 }
 
 export function pickSpeed(rangeMs: number): number {
@@ -180,7 +187,7 @@ export const useStore = create<State>()((set, get) => {
     setLevel(level) { set({ level, selection: null, trail: [], activityNodeId: null }); },
     openActivity(rawNodeId) { set({ activityNodeId: rawNodeId }); },
     closeActivity() { set({ activityNodeId: null }); },
-    select(selection) { set((s) => ({ selection, trail: selection ? extendTrail(s.trail, selection) : [] })); },
+    select(selection, opts) { set((s) => ({ selection, trail: !selection ? [] : opts?.fromGraph ? [selection] : extendTrail(s.trail, selection) })); },
     seekToOccurrence(id) {
       const item = get().index?.byId.get(id);
       if (!item) return;

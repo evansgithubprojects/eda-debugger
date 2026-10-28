@@ -274,8 +274,8 @@ function GraphLayer({ layerKey, level, size, geometry, refit, onZoomHandler }: L
         nodesConnectable={false}
         elementsSelectable={false}
         proOptions={{ hideAttribution: true }}
-        onNodeClick={(_, n) => n.id !== RING_ID && select({ type: 'node', id: n.id })}
-        onEdgeClick={(_, e) => select({ type: 'edge', id: e.id })}
+        onNodeClick={(_, n) => n.id !== RING_ID && select({ type: 'node', id: n.id }, { fromGraph: true })}
+        onEdgeClick={(_, e) => select({ type: 'edge', id: e.id }, { fromGraph: true })}
         onPaneClick={() => select(null)}
         onNodeDoubleClick={(_, n) => {
           const m = model.nodes.find((x) => x.id === n.id);
