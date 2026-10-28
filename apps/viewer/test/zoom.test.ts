@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { FIT_MARGIN, fitViewport, MAX_ZOOM, MIN_ZOOM, rectOnScreen, viewportForRect, zoomFrames } from '../src/graph/zoom';
+import { centreViewport, FIT_MARGIN, fitViewport, MAX_ZOOM, MIN_ZOOM, rectOnScreen, viewportForRect, zoomFrames } from '../src/graph/zoom';
 
 /** Parses "translate(Xpx, Ypx) scale(S)". */
 function parse(transform: string) {
@@ -8,6 +8,14 @@ function parse(transform: string) {
 }
 
 describe('zoom helpers', () => {
+  it('centres the midpoint of the points in the pane', () => {
+    const size = { width: 800, height: 600 };
+    const vp = centreViewport([{ x: 100, y: 100 }, { x: 300, y: 200 }], 2, size);
+    // The midpoint (200, 150) lands at the pane centre.
+    expect({ x: 200 * vp.zoom + vp.x, y: 150 * vp.zoom + vp.y }).toEqual({ x: 400, y: 300 });
+    expect(vp.zoom).toBe(2);
+  });
+
   it('maps a flow rectangle into a screen rectangle, centred and fully visible', () => {
     const flow = { x: -100, y: -100, width: 200, height: 200 };
     const screen = { x: 300, y: 50, width: 176, height: 58 };

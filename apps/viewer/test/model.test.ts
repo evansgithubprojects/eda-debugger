@@ -73,3 +73,34 @@ describe('pathway counters', () => {
     expect(countFired(edge.times, -5, index.end)).toBe(0);
   });
 });
+
+describe('pinned nodes', () => {
+  let t = 0;
+  const rec = createRecorder({ now: () => (t += 1) });
+  const a = {};
+  const idle = {};
+  rec.labelEmitter(a, 'A');
+  rec.labelEmitter(idle, 'Quiet');
+  const h = function h() {};
+  rec.dispatch({ emitter: a, eventName: 'go', handlers: [h], payload: 1 }, (invoke) => invoke(h, () => h()));
+  rec.dispatch({ emitter: idle, eventName: 'unheard', handlers: [], payload: 1 }, () => {});
+  // Both are active over the whole recording; `[]` stands for a window with nothing in it.
+  const index = buildIndex(rec.export());
+  const quiet = [...index.nodes.values()].find((n) => n.label === 'Quiet')!;
+  const level = { kind: 'handlers', processId: quiet.processId } as const;
+
+  it('leaves out an emitter with nothing in the window', () => {
+    expect(buildModel(index, level, []).nodes.some((n) => n.id === quiet.id)).toBe(false);
+  });
+
+  it('draws it, marked idle, when something is pinned to it', () => {
+    const node = buildModel(index, level, [], [quiet.id]).nodes.find((n) => n.id === quiet.id);
+    expect(node).toMatchObject({ idle: true, rawId: quiet.id });
+  });
+
+  it('does not mark a node that is drawn anyway', () => {
+    const active = [...index.nodes.values()].find((n) => n.label === 'A')!;
+    const m = buildModel(index, { kind: 'handlers', processId: active.processId }, index.items, [active.id]);
+    expect(m.nodes.find((n) => n.id === active.id)?.idle).toBeUndefined();
+  });
+});

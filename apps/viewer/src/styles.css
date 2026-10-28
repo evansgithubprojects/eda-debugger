@@ -110,6 +110,7 @@ code, pre { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-si
 
 /* flash on throw: red pulse that fades back to the persistent indicator */
 .node-card.flash { animation: flash-red .9s ease-out; }
+.node-card.idle { opacity: .6; border-style: dashed; }
 @keyframes flash-red {
   0% { box-shadow: 0 0 0 0 rgb(255 77 94 / .95), 0 0 30px 8px rgb(255 77 94 / .9); background: #8a1f2b; }
   60% { box-shadow: 0 0 0 10px rgb(255 77 94 / .25), 0 0 22px 4px rgb(255 77 94 / .5); background: #4a1a21; }

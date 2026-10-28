@@ -7,7 +7,7 @@ import { createContext, memo, useContext, useEffect, useLayoutEffect, useMemo, u
 import { layout, layoutBounds, NODE_H, NODE_W, type Positions } from '../graph/layout';
 import { processNodeId, type Level, type ModelEdge, type ModelNode } from '../graph/model';
 import {
-  fitViewport, MAX_ZOOM, saveViewport, takeSavedViewport, MIN_ZOOM, motion, rectOnScreen, toKeyframes, ZOOM_MS, zoomFrames, type Rect, type Viewport,
+  centreViewport, fitViewport, MAX_ZOOM, saveViewport, takeSavedViewport, MIN_ZOOM, motion, rectOnScreen, toKeyframes, ZOOM_MS, zoomFrames, type Rect, type Viewport,
 } from '../graph/zoom';
 import { useActive, useModel } from '../hooks';
 import { countFired, type Active } from '../replay';
@@ -50,7 +50,7 @@ const NodeCard = memo(function NodeCard({ id }: NodeProps<RouteNode>) {
   const lit = active.litNodes.get(id) ?? 0;
   const flashing = active.flashingNodes.has(id);
   const thrown = active.thrownNodes.get(id) ?? 0;
-  const cls = ['node-card', `kind-${model.kind}`, flashing && 'flash', thrown > 0 && 'has-thrown', selectedId === id && 'selected', focusedId === id && 'focused'];
+  const cls = ['node-card', `kind-${model.kind}`, flashing && 'flash', thrown > 0 && 'has-thrown', model.idle && 'idle', selectedId === id && 'selected', focusedId === id && 'focused'];
   return (
     <div className={cls.filter(Boolean).join(' ')} style={{ width: NODE_W, height: NODE_H, ['--lit' as string]: lit }}>
       <Handle type="target" position={Position.Left} isConnectable={false} style={hiddenHandle} />
@@ -181,7 +181,7 @@ function GraphLayer({ layerKey, level, size, geometry, refit }: LayerProps) {
   const select = useStore((s) => s.select);
   const focus = useStore((s) => s.focus);
   const setLevel = useStore((s) => s.setLevel);
-  const { setViewport } = useReactFlow<AnyNode, RouteEdge>();
+  const { setViewport, getViewport } = useReactFlow<AnyNode, RouteEdge>();
 
   // Re-layout only when the shape of the graph changes, not on every count update.
   const sig = useMemo(
@@ -216,18 +216,20 @@ function GraphLayer({ layerKey, level, size, geometry, refit }: LayerProps) {
   // Only the layer on top answers focus requests, and not mid-zoom: a request that zoomed in lands once it's done.
   const focusedId = focus?.nodeId && refit && model ? (model.nodes.some((n) => n.id === focus.nodeId) ? focus.nodeId : model.mapNode(focus.nodeId)) : null;
   const focusedEdge = focus?.edgeId && refit ? model?.edges.find((e) => e.id === focus.edgeId) : undefined;
+  // A re-fit (the graph's shape changed) puts the camera back on the whole graph, so the pan is applied again after it.
+  const panned = useRef('');
   useEffect(() => {
     // A pathway is centred on the midpoint between its ends.
     const ends = focusedEdge ? [focusedEdge.source, focusedEdge.target] : focusedId ? [focusedId] : [];
     const ps = ends.map((id) => lay?.positions.get(id));
-    if (!ps.length || ps.some((p) => !p)) return;
-    const cx = ps.reduce((n, p) => n + p!.x, 0) / ps.length + NODE_W / 2;
-    const cy = ps.reduce((n, p) => n + p!.y, 0) / ps.length + NODE_H / 2;
-    const zoom = Math.max(camera.current.zoom, 1);
-    camera.current = { zoom, x: size.width / 2 - cx * zoom, y: size.height / 2 - cy * zoom };
+    if (!focus || !ps.length || ps.some((p) => !p)) return;
+    const key = `${focus.seq}|${sig}`;
+    if (panned.current === key) return;
+    panned.current = key;
+    camera.current = centreViewport(ps.map((p) => ({ x: p!.x + NODE_W / 2, y: p!.y + NODE_H / 2 })), Math.max(getViewport().zoom, 1), size);
     void setViewport(camera.current, { duration: motion(400) });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [focus?.seq, refit]);
+  }, [focus?.seq, refit, sig]);
 
   // Stable objects: only a new layout produces new ones.
   const nodes = useMemo<AnyNode[]>(() => {

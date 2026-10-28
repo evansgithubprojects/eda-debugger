@@ -13,6 +13,8 @@ export interface ModelNode {
   detail: string;
   /** Raw node id for handler/emitter nodes, which can be opened in the activity view. */
   rawId?: string;
+  /** Drawn only because something is looking at it: it has no activity in the window. */
+  idle?: boolean;
 }
 
 export interface ModelEdge {
@@ -35,7 +37,8 @@ export interface GraphModel {
 
 export const processNodeId = (processId: string) => `p:${processId}`;
 
-export function buildModel(index: ReplayIndex, level: Level, items: IndexedOccurrence[] = index.items): GraphModel {
+/** `pinned` raw node ids are drawn even when the window gives them nothing to show, so a link to one has somewhere to land. */
+export function buildModel(index: ReplayIndex, level: Level, items: IndexedOccurrence[] = index.items, pinned: readonly string[] = []): GraphModel {
   const mapNode: MapNode = (id) => {
     const n = index.nodes.get(id);
     if (!n) return null;
@@ -77,9 +80,9 @@ export function buildModel(index: ReplayIndex, level: Level, items: IndexedOccur
     for (const n of index.nodes.values()) {
       // An emitter that never fired or received anything is just noise.
       const idle = n.kind === 'emitter' && !handled.get(n.id) && !emitted.get(n.id);
-      if (n.processId === level.processId && !idle) {
-        nodes.push({ id: n.id, label: n.label, kind: n.kind, processId: n.processId, detail: detail(n.id), rawId: n.id });
-      }
+      if (n.processId !== level.processId) continue;
+      if (!idle) nodes.push({ id: n.id, label: n.label, kind: n.kind, processId: n.processId, detail: detail(n.id), rawId: n.id });
+      else if (pinned.includes(n.id)) nodes.push({ id: n.id, label: n.label, kind: n.kind, processId: n.processId, detail: 'no activity in window', rawId: n.id, idle: true });
     }
     for (const id of used) {
       if (id.startsWith('p:') && id !== processNodeId(level.processId)) {

@@ -41,6 +41,13 @@ export function fitViewport(bounds: Rect, width: number, height: number, margin 
   };
 }
 
+/** The viewport at `zoom` that puts the midpoint of `points` (flow coordinates) in the middle of a `size` pane. */
+export function centreViewport(points: { x: number; y: number }[], zoom: number, size: { width: number; height: number }): Viewport {
+  const cx = points.reduce((n, p) => n + p.x, 0) / points.length;
+  const cy = points.reduce((n, p) => n + p.y, 0) / points.length;
+  return { zoom, x: size.width / 2 - cx * zoom, y: size.height / 2 - cy * zoom };
+}
+
 const easeInOutCubic = (p: number) => (p < 0.5 ? 4 * p * p * p : 1 - Math.pow(-2 * p + 2, 3) / 2);
 const smooth = (a: number, b: number, p: number) => {
   const x = Math.min(1, Math.max(0, (p - a) / (b - a)));

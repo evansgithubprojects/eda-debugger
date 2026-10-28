@@ -156,8 +156,9 @@ export const useStore = create<State>()((set, get) => {
   };
 
   /** Asks the graph to pan to and pulse `target`; `seq` makes repeat requests count, and the request clears itself. */
+  let focusSeq = 0; // never reset, so a request is told apart from every earlier one even after focus clears
   const setFocus = (target: FocusTarget, extraMs = 0) => {
-    const seq = (get().focus?.seq ?? 0) + 1;
+    const seq = ++focusSeq;
     set({ focus: { ...target, seq } });
     setTimeout(() => { if (get().focus?.seq === seq) set({ focus: null }); }, 1600 + extraMs);
   };

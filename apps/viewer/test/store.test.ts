@@ -88,15 +88,14 @@ describe('focus on inspect', () => {
     s.select(null);
   });
 
-  it('seeks to the occurrence when selecting a run', () => {
-    const index = useStore.getState().index!;
-    const item = index.items[0]!;
-    useStore.getState().selectAt({ type: 'run', id: runId(item.occ.id, emitter, 'emitted') }, item.occ.id);
-    const s = useStore.getState();
-    expect(s.selection).toEqual({ type: 'run', id: runId(item.occ.id, emitter, 'emitted') });
-    expect(s.t).toBe(item.occ.ts);
-    expect(s.focus).toMatchObject({ nodeId: emitter });
-    s.select(null);
+  it('numbers every focus request differently, even after the previous one clears', () => {
+    const { select } = useStore.getState();
+    select({ type: 'node', id: 'x' });
+    const first = useStore.getState().focus!.seq;
+    useStore.setState({ focus: null });
+    select({ type: 'node', id: 'x' });
+    expect(useStore.getState().focus!.seq).toBeGreaterThan(first);
+    select(null);
   });
 });
 

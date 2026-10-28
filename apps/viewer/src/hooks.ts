@@ -9,7 +9,13 @@ export function useModel(levelOverride?: Level): GraphModel | null {
   const current = useStore((s) => s.level);
   const level = levelOverride ?? current;
   const window = useStore((s) => s.window);
-  return useMemo(() => (index ? buildModel(index, level, inWindow(index, window)) : null), [index, level, window]);
+  // What is being inspected or linked to stays drawn, whatever the window holds.
+  const focused = useStore((s) => s.focus?.nodeId);
+  const selected = useStore((s) => (s.selection?.type === 'node' ? s.selection.id : undefined));
+  return useMemo(
+    () => (index ? buildModel(index, level, inWindow(index, window), [focused, selected].filter((id): id is string => !!id)) : null),
+    [index, level, window, focused, selected],
+  );
 }
 
 export function useActive(model: GraphModel | null): Active | null {
