@@ -4,7 +4,6 @@ export interface Viewport { x: number; y: number; zoom: number }
 export const MIN_ZOOM = 0.2;
 export const MAX_ZOOM = 8;
 export const ZOOM_MS = 700;
-export const ACTIVITY_ZOOM_MS = 400;
 /** Pixels left around a freshly shown graph, so the outermost nodes and their markers aren't clipped. */
 export const FIT_MARGIN = 24;
 const STEPS = 24;

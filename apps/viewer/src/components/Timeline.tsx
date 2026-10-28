@@ -41,7 +41,7 @@ export function Timeline() {
   }, [index, width, span]);
   const max = Math.max(1, ...bins);
 
-  const errors = useMemo(() => index.items.flatMap((i) => i.throws.map((th) => th.at)), [index]);
+  const errors = useMemo(() => index.items.flatMap((i) => i.throws.filter((th) => !th.rethrown).map((th) => th.at)), [index]);
   const flagged = useMemo(
     () => index.items.filter((i) => index.findingsByOcc.has(i.occ.id)).map((i) => ({ at: i.occ.ts, high: index.findingsByOcc.get(i.occ.id)!.some((f) => f.priority === 'high') })),
     [index],

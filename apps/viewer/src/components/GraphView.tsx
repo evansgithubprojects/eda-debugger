@@ -7,12 +7,12 @@ import { createContext, memo, useContext, useEffect, useLayoutEffect, useMemo, u
 import { layout, layoutBounds, NODE_H, NODE_W, type Positions } from '../graph/layout';
 import { processNodeId, type Level, type ModelEdge, type ModelNode } from '../graph/model';
 import {
-  ACTIVITY_ZOOM_MS, fitViewport, MAX_ZOOM, saveViewport, takeSavedViewport, MIN_ZOOM, motion, rectOnScreen, toKeyframes, ZOOM_MS, zoomFrames, type Rect, type Viewport,
+  fitViewport, MAX_ZOOM, saveViewport, takeSavedViewport, MIN_ZOOM, motion, rectOnScreen, toKeyframes, ZOOM_MS, zoomFrames, type Rect, type Viewport,
 } from '../graph/zoom';
 import { useActive, useModel } from '../hooks';
 import { countFired, type Active } from '../replay';
 import { useStore } from '../store';
-import { HandlerRef } from './common';
+import { NodeRef } from './common';
 
 /**
  * Everything that changes while replaying lives in this context, not in the node/edge objects handed to
@@ -26,6 +26,7 @@ interface ViewState {
   selectedId: string | null;
   /** Briefly set after a "show on graph" request. */
   focusedId: string | null;
+  focusedEdgeId: string | null;
   /** Playhead and the end of the replay window, for the pathway counters. */
   t: number;
   end: number;
@@ -49,17 +50,13 @@ const NodeCard = memo(function NodeCard({ id }: NodeProps<RouteNode>) {
   const lit = active.litNodes.get(id) ?? 0;
   const flashing = active.flashingNodes.has(id);
   const thrown = active.thrownNodes.get(id) ?? 0;
-  const flagged = active.flaggedNodes.get(id);
-  const cls = ['node-card', `kind-${model.kind}`, flashing && 'flash', thrown > 0 && 'has-thrown', flagged && 'has-flagged', selectedId === id && 'selected', focusedId === id && 'focused'];
+  const cls = ['node-card', `kind-${model.kind}`, flashing && 'flash', thrown > 0 && 'has-thrown', selectedId === id && 'selected', focusedId === id && 'focused'];
   return (
     <div className={cls.filter(Boolean).join(' ')} style={{ width: NODE_W, height: NODE_H, ['--lit' as string]: lit }}>
       <Handle type="target" position={Position.Left} isConnectable={false} style={hiddenHandle} />
-      <div className="node-title" title={model.label}>{model.kind === 'process' || model.kind === 'stub' ? model.label : <HandlerRef>{model.label}</HandlerRef>}</div>
+      <div className="node-title" title={model.label}>{model.kind === 'process' || model.kind === 'stub' ? model.label : <NodeRef id={model.id} label={model.label} qualify={false} />}</div>
       <div className="node-detail">{model.detail}</div>
       {thrown > 0 && <span className="corner corner-error" title={`${thrown} throw(s) so far`}>✕ {thrown}</span>}
-      {flagged && (
-        <span className={`corner corner-warn ${flagged.high ? 'high' : ''}`} title="Suspected corrupt payload received">⚠ {flagged.count}</span>
-      )}
       <Handle type="source" position={Position.Right} isConnectable={false} style={hiddenHandle} />
     </div>
   );
@@ -74,12 +71,19 @@ const RingNodeView = memo(function RingNodeView({ data }: NodeProps<RingNode>) {
   );
 });
 
-/** Where the line between two node centres leaves a `w` x `h` card centred at (cx, cy). */
-function edgePoint(cx: number, cy: number, w: number, h: number, tx: number, ty: number): [number, number] {
+/** How far a pathway runs under the card it ends at, so no sliver shows at an angled border or a rounded corner. */
+const EDGE_TUCK = 10;
+
+/**
+ * Where the line between two node centres leaves a `w` x `h` card centred at (cx, cy), moved `tuck` px back inside
+ * the card. Cards are opaque and drawn over pathways, so the tucked part is hidden.
+ */
+function edgePoint(cx: number, cy: number, w: number, h: number, tx: number, ty: number, tuck = 0): [number, number] {
   const dx = tx - cx;
   const dy = ty - cy;
   const scale = 1 / Math.max(Math.abs(dx) / (w / 2) || 0, Math.abs(dy) / (h / 2) || 0, 1e-6);
-  return [cx + dx * scale, cy + dy * scale];
+  const len = Math.hypot(dx, dy) || 1;
+  return [cx + dx * scale - (dx / len) * tuck, cy + dy * scale - (dy / len) * tuck];
 }
 
 const centreOf = (n: InternalNode) => {
@@ -95,8 +99,10 @@ const centreOf = (n: InternalNode) => {
 function floatingPath(source: InternalNode, target: InternalNode): [string, number, number] {
   const s = centreOf(source);
   const t = centreOf(target);
-  const [sx, sy] = edgePoint(s.cx, s.cy, s.w, s.h, t.cx, t.cy);
-  const [tx, ty] = edgePoint(t.cx, t.cy, t.w, t.h, s.cx, s.cy);
+  // Cards that nearly touch would tuck the whole line away.
+  const tuck = Math.min(EDGE_TUCK, Math.hypot(t.cx - s.cx, t.cy - s.cy) / 8);
+  const [sx, sy] = edgePoint(s.cx, s.cy, s.w, s.h, t.cx, t.cy, tuck);
+  const [tx, ty] = edgePoint(t.cx, t.cy, t.w, t.h, s.cx, s.cy, tuck);
   const dx = tx - sx;
   const dy = ty - sy;
   const len = Math.hypot(dx, dy) || 1;
@@ -107,18 +113,16 @@ function floatingPath(source: InternalNode, target: InternalNode): [string, numb
 }
 
 const RouteEdgeView = memo(function RouteEdgeView({ id, source, target }: EdgeProps<RouteEdge>) {
-  const { edges, active, selectedId, t, end } = useView();
+  const { edges, active, selectedId, focusedEdgeId, t, end } = useView();
   const from = useInternalNode(source);
   const to = useInternalNode(target);
   const edge = edges.get(id);
   if (!edge || !from || !to) return null;
   const [path, lx, ly] = floatingPath(from, to);
   const lit = active.litEdges.get(id) ?? 0;
-  const flashing = active.flashingEdges.has(id);
-  const thrown = active.thrownEdges.get(id) ?? 0;
   const flagged = active.flaggedEdges.get(id);
   const litFlagged = active.litFlaggedEdges.has(id);
-  const stroke = flashing ? 'var(--error)' : litFlagged ? 'var(--warn)' : lit > 0 ? 'var(--accent)' : flagged ? 'var(--warn-dim)' : 'var(--edge)';
+  const stroke = litFlagged ? 'var(--warn)' : lit > 0 ? 'var(--accent)' : flagged ? 'var(--warn-dim)' : 'var(--edge)';
   // Thickness follows the total so lines don't change width while the counter ticks.
   const width = 1.5 + Math.min(3, Math.log2(edge.count + 1) * 0.5) + lit * 2.5;
   return (
@@ -126,17 +130,16 @@ const RouteEdgeView = memo(function RouteEdgeView({ id, source, target }: EdgePr
       <BaseEdge
         id={id}
         path={path}
-        className={flashing ? 'edge-flash' : undefined}
+        className={focusedEdgeId === id ? 'edge-focused' : undefined}
         style={{
-          stroke, strokeWidth: width, opacity: lit > 0 || flashing ? 0.55 + lit * 0.45 : 0.75,
+          stroke, strokeWidth: width, opacity: lit > 0 ? 0.55 + lit * 0.45 : 0.75,
           strokeDasharray: flagged ? '7 5' : undefined,
           filter: lit > 0.05 ? `drop-shadow(0 0 ${3 + lit * 6}px ${stroke})` : undefined,
         }}
       />
       <EdgeLabelRenderer>
-        <div className={`edge-label ${selectedId === id ? 'selected' : ''}`} style={{ transform: `translate(-50%, -50%) translate(${lx}px, ${ly}px)` }}>
+        <div className={`edge-label ${selectedId === id ? 'selected' : ''} ${focusedEdgeId === id ? 'focused' : ''}`} style={{ transform: `translate(-50%, -50%) translate(${lx}px, ${ly}px)` }}>
           <span title={`${edge.count} in this window`}>{countFired(edge.times, t, end)}</span>
-          {thrown > 0 && <span className="mark mark-error" title="Throws on this route">✕{thrown}</span>}
           {flagged && <span className="mark mark-warn" title={`Suspected corrupt payloads on this route${flagged.high ? ', some reaching an external system' : ''}`}>⚠{flagged.count}</span>}
         </div>
       </EdgeLabelRenderer>
@@ -165,11 +168,10 @@ interface LayerProps {
   geometry: Map<number, Geometry>;
   /** Re-fit the camera when the graph's shape changes (only for the layer on top, not during a zoom). */
   refit: boolean;
-  onZoomHandler(m: ModelNode, focus: Rect, layerKey: number): void;
 }
 
 /** One zoom level of the graph. A layer keeps its own level, so the outgoing one stays put while it fades. */
-function GraphLayer({ layerKey, level, size, geometry, refit, onZoomHandler }: LayerProps) {
+function GraphLayer({ layerKey, level, size, geometry, refit }: LayerProps) {
   const model = useModel(level);
   const active = useActive(model);
   const index = useStore((s) => s.index);
@@ -212,12 +214,17 @@ function GraphLayer({ layerKey, level, size, geometry, refit, onZoomHandler }: L
   }, [sig]);
 
   // Only the layer on top answers focus requests, and not mid-zoom: a request that zoomed in lands once it's done.
-  const focusedId = focus && refit && model ? model.mapNode(focus.nodeId) : null;
+  const focusedId = focus?.nodeId && refit && model ? (model.nodes.some((n) => n.id === focus.nodeId) ? focus.nodeId : model.mapNode(focus.nodeId)) : null;
+  const focusedEdge = focus?.edgeId && refit ? model?.edges.find((e) => e.id === focus.edgeId) : undefined;
   useEffect(() => {
-    const p = focusedId ? lay?.positions.get(focusedId) : undefined;
-    if (!p) return;
+    // A pathway is centred on the midpoint between its ends.
+    const ends = focusedEdge ? [focusedEdge.source, focusedEdge.target] : focusedId ? [focusedId] : [];
+    const ps = ends.map((id) => lay?.positions.get(id));
+    if (!ps.length || ps.some((p) => !p)) return;
+    const cx = ps.reduce((n, p) => n + p!.x, 0) / ps.length + NODE_W / 2;
+    const cy = ps.reduce((n, p) => n + p!.y, 0) / ps.length + NODE_H / 2;
     const zoom = Math.max(camera.current.zoom, 1);
-    camera.current = { zoom, x: size.width / 2 - (p.x + NODE_W / 2) * zoom, y: size.height / 2 - (p.y + NODE_H / 2) * zoom };
+    camera.current = { zoom, x: size.width / 2 - cx * zoom, y: size.height / 2 - cy * zoom };
     void setViewport(camera.current, { duration: motion(400) });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [focus?.seq, refit]);
@@ -250,9 +257,10 @@ function GraphLayer({ layerKey, level, size, geometry, refit, onZoomHandler }: L
   const view = useMemo<ViewState | null>(
     () => (model && active ? {
       nodes: new Map(model.nodes.map((n) => [n.id, n])), edges: new Map(model.edges.map((e) => [e.id, e])), active,
-      selectedId: selection && selection.type !== 'occurrence' ? selection.id : null, focusedId, t, end,
+      selectedId: selection && selection.type !== 'occurrence' && selection.type !== 'event' ? selection.id : null,
+      focusedId, focusedEdgeId: focusedEdge?.id ?? null, t, end,
     } : null),
-    [model, active, selection, focusedId, t, end],
+    [model, active, selection, focusedId, focusedEdge, t, end],
   );
 
   if (!model || !view || !lay) return null;
@@ -281,10 +289,6 @@ function GraphLayer({ layerKey, level, size, geometry, refit, onZoomHandler }: L
           const m = model.nodes.find((x) => x.id === n.id);
           if (!m) return;
           if (m.kind === 'process' || m.kind === 'stub') setLevel({ kind: 'handlers', processId: m.processId });
-          else if (m.kind === 'handler' && m.rawId) {
-            const p = lay.positions.get(m.id);
-            if (p) onZoomHandler(m, rectOnScreen(boxOf(p), camera.current), layerKey);
-          }
         }}
       >
         <Background gap={24} />
@@ -297,6 +301,25 @@ function GraphLayer({ layerKey, level, size, geometry, refit, onZoomHandler }: L
 interface Layer { key: number; level: Level }
 interface Layers { current: Layer; outgoing: Layer | null }
 
+/** Where the graph is zoomed to, centred along its top edge. */
+function ZoomCrumbs() {
+  const index = useStore((s) => s.index);
+  const level = useStore((s) => s.level);
+  const setLevel = useStore((s) => s.setLevel);
+  const processLabel = level.kind === 'handlers' ? index?.processLabel.get(level.processId) : undefined;
+  return (
+    <nav className="crumbs zoom-crumbs" aria-label="Zoom level">
+      <button className={level.kind === 'process' ? 'current' : ''} onClick={() => setLevel({ kind: 'process' })}>Processes</button>
+      {processLabel && (
+        <>
+          <span>›</span>
+          <button className="current">{processLabel}</button>
+        </>
+      )}
+    </nav>
+  );
+}
+
 /**
  * Zooming is a crossfade between two stacked layers driven by one camera: the parent grows around the card
  * being entered and fades away, uncovering the child, which starts small inside that card. Going back plays
@@ -304,7 +327,6 @@ interface Layers { current: Layer; outgoing: Layer | null }
  */
 export function GraphView() {
   const level = useStore((s) => s.level);
-  const openActivity = useStore((s) => s.openActivity);
   const box = useRef<HTMLDivElement>(null);
   const [size, setSize] = useState<Size | null>(null);
   const keys = useRef(0);
@@ -312,7 +334,6 @@ export function GraphView() {
   const geometry = useRef(new Map<number, Geometry>()).current;
   const wrappers = useRef(new Map<number, HTMLDivElement>()).current;
   const running = useRef<Animation[]>([]);
-  const zooming = useRef(false);
 
   // Any change of level, from any control, starts a transition.
   if (!sameLevel(layers.current.level, level)) {
@@ -385,19 +406,10 @@ export function GraphView() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [current.key]);
 
-  function zoomIntoHandler(m: ModelNode, focus: Rect, layerKey: number) {
-    const el = wrappers.get(layerKey);
-    if (zooming.current || !m.rawId) return;
-    const ms = motion(ACTIVITY_ZOOM_MS);
-    if (!el || !size || ms === 0) { openActivity(m.rawId); return; }
-    zooming.current = true;
-    const a = el.animate(toKeyframes(zoomFrames(focus, size).parent), { duration: ms, fill: 'both', easing: 'linear' });
-    a.finished.then(() => openActivity(m.rawId!), () => { zooming.current = false; });
-  }
-
   const transitioning = outgoing !== null;
   return (
     <div ref={box} className="graph-stack">
+      <ZoomCrumbs />
       {size && [current, outgoing].map((layer) => layer && (
         <div
           key={layer.key}
@@ -412,7 +424,6 @@ export function GraphView() {
               size={size}
               geometry={geometry}
               refit={!transitioning}
-              onZoomHandler={zoomIntoHandler}
             />
           </ReactFlowProvider>
         </div>

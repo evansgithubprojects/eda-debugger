@@ -28,7 +28,7 @@ describe('graph model', () => {
     const pa = [...index.processLabel].find(([, l]) => l === 'A')![0];
     const pb = [...index.processLabel].find(([, l]) => l === 'B')![0];
     expect(m.edges).toEqual([
-      expect.objectContaining({ source: processNodeId(pa), target: processNodeId(pb), count: 2, events: ['leaf'] }),
+      expect.objectContaining({ source: processNodeId(pa), target: processNodeId(pb), count: 2, events: [[...index.events.values()].find((e) => e.label === 'B.leaf')!.key] }),
     ]);
   });
 

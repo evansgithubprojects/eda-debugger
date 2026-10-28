@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { extendTrail, TRAIL_MAX, useStore, type Selection } from '../src/store';
+import { createRecorder } from '@eda-debugger/core';
+import { runId } from '../src/replay';
+import { extendTrail, focusTargetOf, TRAIL_MAX, useStore, type Selection } from '../src/store';
 
 type Sel = NonNullable<Selection>;
 const node = (id: string): Sel => ({ type: 'node', id });
@@ -41,5 +43,96 @@ describe('inspection trail', () => {
     select(edge('a>b'), { fromGraph: true });
     expect(useStore.getState().trail.map((t) => t.id)).toEqual(['a>b']);
     select(null);
+  });
+
+});
+
+describe('focus on inspect', () => {
+  let t = 0;
+  const rec = createRecorder({ now: () => (t += 10) });
+  const a = {};
+  rec.labelEmitter(a, 'A');
+  const h = function handle() { /* noop */ };
+  rec.dispatch({ emitter: a, eventName: 'go', handlers: [h], payload: { n: 1 } }, (invoke) => invoke(h, () => h()));
+  const recording = rec.export();
+  const emitter = recording.nodes.find((n) => n.label === 'A')!.id;
+
+  it('points each kind of selection at its graph element', () => {
+    useStore.getState().load(recording, 'test');
+    const index = useStore.getState().index!;
+    const occ = index.items[0]!.occ.id;
+    expect(focusTargetOf(index, { type: 'node', id: 'x' })).toEqual({ nodeId: 'x' });
+    expect(focusTargetOf(index, { type: 'edge', id: 'a>b' })).toEqual({ edgeId: 'a>b' });
+    expect(focusTargetOf(index, { type: 'occurrence', id: occ })).toEqual({ nodeId: emitter });
+    expect(focusTargetOf(index, { type: 'occurrence', id: 'gone' })).toBeNull();
+    expect(focusTargetOf(index, { type: 'run', id: runId(occ, emitter, 'emitted') })).toEqual({ nodeId: emitter });
+  });
+
+  it('pans the graph for inspector links but not for graph clicks', () => {
+    const { select } = useStore.getState();
+    select({ type: 'node', id: 'x' }, { fromGraph: true });
+    expect(useStore.getState().focus).toBeNull();
+    select({ type: 'node', id: 'x' });
+    expect(useStore.getState().focus).toMatchObject({ nodeId: 'x' });
+    select(null);
+  });
+
+  it('seeks to the occurrence when selecting a run', () => {
+    const index = useStore.getState().index!;
+    const item = index.items[0]!;
+    useStore.getState().selectAt({ type: 'run', id: runId(item.occ.id, emitter, 'emitted') }, item.occ.id);
+    const s = useStore.getState();
+    expect(s.selection).toEqual({ type: 'run', id: runId(item.occ.id, emitter, 'emitted') });
+    expect(s.t).toBe(item.occ.ts);
+    expect(s.focus).toMatchObject({ nodeId: emitter });
+    s.select(null);
+  });
+
+  it('seeks to the occurrence when selecting a run', () => {
+    const index = useStore.getState().index!;
+    const item = index.items[0]!;
+    useStore.getState().selectAt({ type: 'run', id: runId(item.occ.id, emitter, 'emitted') }, item.occ.id);
+    const s = useStore.getState();
+    expect(s.selection).toEqual({ type: 'run', id: runId(item.occ.id, emitter, 'emitted') });
+    expect(s.t).toBe(item.occ.ts);
+    expect(s.focus).toMatchObject({ nodeId: emitter });
+    s.select(null);
+  });
+});
+
+describe('links across scopes', () => {
+  let t = 0;
+  const rec = createRecorder({ now: () => (t += 10) });
+  const a = {};
+  const b = {};
+  rec.labelEmitter(a, 'A');
+  rec.labelEmitter(b, 'B');
+  const send = (e: object, name: string, handlers: Function[]) =>
+    rec.dispatch({ emitter: e, eventName: name, handlers, payload: undefined }, (invoke) => handlers.forEach((h) => invoke(h, () => h())));
+  const boom = function boom() { throw new Error('nope'); };
+  const start = function start() { send(b, 'charge', [boom]); };
+  try { send(a, 'go', [start]); } catch { /* both threw */ }
+  const recording = rec.export();
+  const node = (label: string) => recording.nodes.find((n) => n.label.startsWith(label))!;
+
+  it('zooms into the process of the handler a link names, not just its process node', () => {
+    const s = useStore.getState();
+    s.load(recording, 'test');
+    const index = useStore.getState().index!;
+    const charge = index.items.find((i) => i.template.eventName === 'charge')!;
+    s.setLevel({ kind: 'handlers', processId: node('start').processId });
+    // The error was thrown in `boom` (process B), though the link was clicked on `start` (process A).
+    useStore.getState().selectAt({ type: 'throw', id: index.byId.get(charge.occ.id)!.throws[0]!.id }, charge.occ.id);
+    expect(useStore.getState().level).toEqual({ kind: 'handlers', processId: node('boom').processId });
+    expect(useStore.getState().focus).toMatchObject({ nodeId: node('boom').id });
+  });
+
+  it('leaves the level alone when the handler is already drawn', () => {
+    const s = useStore.getState();
+    s.setLevel({ kind: 'handlers', processId: node('boom').processId });
+    s.inspectNode(node('boom').id);
+    expect(useStore.getState().level).toEqual({ kind: 'handlers', processId: node('boom').processId });
+    expect(useStore.getState().selection).toEqual({ type: 'node', id: node('boom').id });
+    s.select(null);
   });
 });

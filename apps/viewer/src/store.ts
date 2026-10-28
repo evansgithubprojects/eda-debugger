@@ -2,7 +2,7 @@ import type { Finding, RecorderMessage, Recording } from '@eda-debugger/core';
 import { create } from 'zustand';
 import type { Level } from './graph/model';
 import { ZOOM_MS } from './graph/zoom';
-import { buildIndex, type ReplayIndex } from './replay';
+import { buildIndex, parseRunId, parseThrowId, type ReplayIndex } from './replay';
 
 export const SPEEDS = [0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2, 4];
 /** Wall-clock lengths of the lit fade and the red flash, scaled to recording time by playback speed. */
@@ -12,14 +12,52 @@ export const FLASH_WALL_MS = 900;
 /** How many steps of the inspection trail the inspector keeps. */
 export const TRAIL_MAX = 8;
 
-/** A `throw` id is `<occurrenceId>|<handlerId>`; see `throwId`. */
+/** A `throw` id is `<occurrenceId>|<handlerId>`; see `throwId`. An `event` id is an `eventKey`, a `run` id a `runId`. */
 export type Selection =
+  | { type: 'event'; id: string }
   | { type: 'node'; id: string }
   | { type: 'edge'; id: string }
   | { type: 'occurrence'; id: string }
   | { type: 'throw'; id: string }
   | { type: 'finding'; id: string }
+  | { type: 'run'; id: string }
   | null;
+
+/** What the graph should pan to and pulse: a node (raw or as drawn) or a pathway. */
+export type FocusTarget = { nodeId: string; edgeId?: undefined } | { nodeId?: undefined; edgeId: string };
+
+/** The graph element a selection is about, or null when it has none in the recording. */
+export function focusTargetOf(index: ReplayIndex | null, sel: NonNullable<Selection>): FocusTarget | null {
+  if (!index) return null;
+  switch (sel.type) {
+    case 'node': return { nodeId: sel.id };
+    case 'edge': return { edgeId: sel.id };
+    case 'event': { const e = index.events.get(sel.id); return e ? { nodeId: e.emitterId } : null; }
+    case 'occurrence': { const i = index.byId.get(sel.id); return i ? { nodeId: i.occ.sourceNodeId } : null; }
+    case 'run': { const r = parseRunId(index, sel.id); return r ? { nodeId: r.nodeId } : null; }
+    case 'throw': { const t = parseThrowId(index, sel.id); return t ? { nodeId: t.handlerId } : null; }
+    case 'finding': {
+      const f = index.findingsById.get(sel.id);
+      const i = f && index.byId.get(f.occurrenceId);
+      return i ? { nodeId: i.occ.sourceNodeId } : null;
+    }
+  }
+}
+
+/** Events, errors, payloads and runs mean the same thing at every zoom level, so inspecting one survives a zoom. */
+const levelFree = (t: Selection) => t?.type === 'event' || t?.type === 'throw' || t?.type === 'finding' || t?.type === 'run';
+
+/**
+ * The zoom level that draws what `sel` is about, or null when the current one already does. Handlers are only drawn
+ * inside their own process, so a link to one in another process (or, for the selections that name a specific
+ * handler, from the process overview) changes scope instead of stopping at that process's node.
+ */
+function scopeFor(index: ReplayIndex | null, level: Level, sel: NonNullable<Selection>, target: FocusTarget | null): Level | null {
+  const processId = target?.nodeId ? index?.nodes.get(target.nodeId)?.processId : undefined;
+  if (!processId) return null;
+  if (level.kind === 'handlers') return level.processId === processId ? null : { kind: 'handlers', processId };
+  return sel.type === 'node' || sel.type === 'run' || sel.type === 'throw' || sel.type === 'finding' ? { kind: 'handlers', processId } : null;
+}
 
 export interface Toast {
   id: number;
@@ -42,13 +80,12 @@ interface State {
   speed: number;
   window: [number, number];
   level: Level;
-  activityNodeId: string | null;
   selection: Selection;
   /** Everything inspected at this zoom level, oldest first; `selection` is always its last entry. */
   trail: NonNullable<Selection>[];
   toasts: Toast[];
-  /** A node the graph should pan to and pulse; `seq` makes repeat requests for the same node count. */
-  focus: { nodeId: string; seq: number } | null;
+  /** A node or pathway the graph should pan to and pulse; `seq` makes repeat requests for the same one count. */
+  focus: (FocusTarget & { seq: number }) | null;
   live: LiveStatus;
   following: boolean;
 
@@ -60,16 +97,17 @@ interface State {
   setSpeed(speed: number): void;
   setWindow(window: [number, number]): void;
   setLevel(level: Level): void;
-  openActivity(rawNodeId: string): void;
-  closeActivity(): void;
   /** `fromGraph` marks a click on the graph itself: everything drawn there sits directly under the level, so it starts a new trail. */
   select(selection: Selection, opts?: { fromGraph?: boolean }): void;
+  /** Inspects an occurrence and moves the playhead to it; see `selectAt`. */
   seekToOccurrence(id: string): void;
-  /** Inspect a throw or finding: moves the replay to its occurrence and opens its inspector. */
-  selectIssue(issue: { type: 'throw' | 'finding'; id: string }, occurrenceId: string): void;
+  /** Selects `selection` and moves the playhead to the occurrence it is about, widening the window to include it. */
+  selectAt(selection: NonNullable<Selection>, occurrenceId: string): void;
   dismissToast(id: number): void;
-  /** Zooms into the node's process if needed, then pans the graph to it and highlights it. */
-  focusNode(rawNodeId: string): void;
+  /** Inspects a handler: zooms into its process if needed, selects it and pans the graph to it. */
+  inspectNode(rawNodeId: string): void;
+  /** Pans the graph to a pathway at the current zoom level and highlights it. */
+  focusEdge(edgeId: string): void;
   dismissAllToasts(): void;
   connectLive(url: string): void;
   disconnectLive(): void;
@@ -119,6 +157,23 @@ export const useStore = create<State>()((set, get) => {
     if (!toast.sticky) setTimeout(() => get().dismissToast(toast.id), 8000);
   };
 
+  /** Asks the graph to pan to and pulse `target`; `seq` makes repeat requests count, and the request clears itself. */
+  const setFocus = (target: FocusTarget, extraMs = 0) => {
+    const seq = (get().focus?.seq ?? 0) + 1;
+    set({ focus: { ...target, seq } });
+    setTimeout(() => { if (get().focus?.seq === seq) set({ focus: null }); }, 1600 + extraMs);
+  };
+
+  /** Selects `selection` and shows it on the graph, first changing zoom level if it isn't drawn at the current one. */
+  const reveal = (selection: NonNullable<Selection>, extra: Partial<State> = {}) => {
+    const { index, level, trail } = get();
+    const target = focusTargetOf(index, selection);
+    const to = scopeFor(index, level, selection, target);
+    // Node, edge and occurrence selections belong to the level being left.
+    set({ ...extra, selection, trail: extendTrail(to ? trail.filter(levelFree) : trail, selection), ...(to && { level: to }) });
+    if (target) setFocus(target, to ? ZOOM_MS : 0);
+  };
+
   let pending: Recording | null = null;
   let flushTimer: ReturnType<typeof setTimeout> | null = null;
   const flush = () => {
@@ -145,7 +200,6 @@ export const useStore = create<State>()((set, get) => {
       t: keepView && !following ? Math.min(Math.max(s.t, index.start), index.end) : following && live ? index.end : index.start,
       speed: keepView ? s.speed : pickSpeed(index.end - index.start),
       level: keepView ? s.level : { kind: 'process' },
-      activityNodeId: keepView ? s.activityNodeId : null,
       selection: keepView ? s.selection : null,
       trail: keepView ? s.trail : [],
       playing: false,
@@ -155,7 +209,7 @@ export const useStore = create<State>()((set, get) => {
 
   return {
     recording: null, index: null, sourceName: '', t: 0, playing: false, speed: 1, window: [0, 0],
-    level: { kind: 'process' }, activityNodeId: null, selection: null, trail: [], toasts: [], focus: null, live: 'off', following: true,
+    level: { kind: 'process' }, selection: null, trail: [], toasts: [], focus: null, live: 'off', following: true,
 
     load(recording, name) {
       get().disconnectLive();
@@ -184,55 +238,26 @@ export const useStore = create<State>()((set, get) => {
       const { t } = get();
       set({ window: [Math.min(a, b), Math.max(a, b)], t: Math.min(Math.max(t, Math.min(a, b)), Math.max(a, b)), following: false });
     },
-    setLevel(level) { set({ level, selection: null, trail: [], activityNodeId: null }); },
-    openActivity(rawNodeId) { set({ activityNodeId: rawNodeId }); },
-    closeActivity() { set({ activityNodeId: null }); },
-    select(selection, opts) { set((s) => ({ selection, trail: !selection ? [] : opts?.fromGraph ? [selection] : extendTrail(s.trail, selection) })); },
-    seekToOccurrence(id) {
-      const item = get().index?.byId.get(id);
-      if (!item) return;
-      const [w0, w1] = get().window;
-      set({
-        t: item.occ.ts, playing: false, following: false,
-        window: [Math.min(w0, item.occ.ts), Math.max(w1, item.occ.ts)],
-        selection: { type: 'occurrence', id },
-        trail: extendTrail(get().trail, { type: 'occurrence', id }),
-      });
+    setLevel(level) { set({ level, selection: null, trail: [] }); },
+    select(selection, opts) {
+      // Clicking the graph itself needs no pan; anything else (a link in the inspector) shows where it is.
+      if (selection && !opts?.fromGraph) reveal(selection);
+      else set((s) => ({ selection, trail: !selection ? [] : [selection] }));
     },
-    selectIssue(issue, occurrenceId) {
+    seekToOccurrence(id) { get().selectAt({ type: 'occurrence', id }, id); },
+    selectAt(selection, occurrenceId) {
       const item = get().index?.byId.get(occurrenceId);
       if (!item) return;
       const [w0, w1] = get().window;
-      set({
+      reveal(selection, {
         t: item.occ.ts, playing: false, following: false,
         window: [Math.min(w0, item.occ.ts), Math.max(w1, item.occ.ts)],
-        selection: issue,
-        trail: extendTrail(get().trail, issue),
       });
     },
     dismissToast(id) { set((s) => ({ toasts: s.toasts.filter((t) => t.id !== id) })); },
     dismissAllToasts() { set({ toasts: [] }); },
-    focusNode(nodeId) {
-      const { index, level, focus } = get();
-      const processId = index?.nodes.get(nodeId)?.processId;
-      // Handlers are only drawn inside their process. Throws and findings mean the same thing at every level,
-      // so inspecting one survives the zoom; node and edge selections belong to the level being left.
-      const zoom = !!processId && (level.kind !== 'handlers' || level.processId !== processId);
-      const seq = (focus?.seq ?? 0) + 1;
-      set((s) => {
-        const keep = s.selection?.type === 'throw' || s.selection?.type === 'finding';
-        return {
-          focus: { nodeId, seq },
-          ...(zoom && {
-            level: { kind: 'handlers', processId: processId! } as Level,
-            activityNodeId: null,
-            selection: keep ? s.selection : null,
-            trail: keep ? s.trail.filter((t) => t.type === 'throw' || t.type === 'finding') : [],
-          }),
-        };
-      });
-      setTimeout(() => { if (get().focus?.seq === seq) set({ focus: null }); }, 1600 + (zoom ? ZOOM_MS : 0));
-    },
+    inspectNode(nodeId) { reveal({ type: 'node', id: nodeId }); },
+    focusEdge(edgeId) { setFocus({ edgeId }); },
 
     connectLive(url) {
       get().disconnectLive();

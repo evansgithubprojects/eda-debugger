@@ -1,9 +1,10 @@
 import type { Finding } from '@eda-debugger/core';
-import { useMemo, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import { useModel } from '../hooks';
-import { chainOf, countFired, eventLabel, inWindow, notifications, parseThrowId, recipientsOf, throwId, type IndexedOccurrence, type ReplayIndex, type Tier } from '../replay';
+import type { GraphModel } from '../graph/model';
+import { activityOf, chainOf, errorCode, throwIdFor, countFired, edgeId, eventKey, eventLabel, inWindow, isProblemRun, notifications, parseRunId, parseThrowId, recipientsOf, runById, throwId, type IndexedOccurrence, type Notification, type ReplayIndex, type Run, type Tier } from '../replay';
 import { TRAIL_MAX, useStore, type Selection } from '../store';
-import { Badge, CaptureBadge, EventRef, FindingSummary, fmtMs, HandlerRef, Json, Section, shortValue } from './common';
+import { Badge, CallChain, ErrorId, CaptureBadge, EventLink, EventRef, FindingBadges, FindingChain, FindingSummary, fmtMs, HandlerLink, InspectLink, Json, NodeRef, Section, shortValue } from './common';
 
 export function Inspector() {
   const index = useStore((s) => s.index)!;
@@ -12,8 +13,10 @@ export function Inspector() {
     <aside className="inspector">
       <Crumbs index={index} />
       {!selection && <Overview index={index} />}
+      {selection?.type === 'event' && <EventDetail index={index} id={selection.id} />}
       {selection?.type === 'node' && <NodeDetail index={index} id={selection.id} />}
       {selection?.type === 'edge' && <EdgeDetail key={selection.id} index={index} id={selection.id} />}
+      {selection?.type === 'run' && <RunDetail index={index} id={selection.id} />}
       {selection?.type === 'occurrence' && <OccurrenceDetail index={index} id={selection.id} />}
       {selection?.type === 'throw' && <ErrorDetail index={index} id={selection.id} />}
       {selection?.type === 'finding' && <FindingSelection index={index} id={selection.id} />}
@@ -31,13 +34,19 @@ function Crumbs({ index }: { index: ReplayIndex }) {
   const nodeLabel = (id: string) => model?.nodes.find((n) => n.id === id)?.label ?? index.nodes.get(id)?.label ?? id;
   const label = (t: NonNullable<Selection>) => {
     if (t.type === 'node') return nodeLabel(t.id);
+    if (t.type === 'event') return index.events.get(t.id)?.label ?? t.id;
+    if (t.type === 'run') {
+      const r = parseRunId(index, t.id);
+      const item = r && index.byId.get(r.occurrenceId);
+      return r && item ? `${nodeLabel(r.nodeId)} ${r.dir} ${eventLabel(index, item)}` : t.id;
+    }
     if (t.type === 'edge') {
       const e = model?.edges.find((x) => x.id === t.id);
       return e ? `${nodeLabel(e.source)} → ${nodeLabel(e.target)}` : t.id;
     }
     if (t.type === 'throw') {
       const src = parseThrowId(index, t.id);
-      return src ? `${nodeLabel(src.handlerId)} threw` : t.id;
+      return src ? `${errorCode(t.id)} · ${nodeLabel(src.handlerId)} threw` : t.id;
     }
     if (t.type === 'finding') {
       const f = index.findingsById.get(t.id);
@@ -48,8 +57,8 @@ function Crumbs({ index }: { index: ReplayIndex }) {
     return item ? eventLabel(index, item) : t.id;
   };
   const labelNode = (t: NonNullable<Selection>) => {
-    if (t.type === 'node') return model?.nodes.find((n) => n.id === t.id)?.kind === 'process' ? label(t) : <HandlerRef>{label(t)}</HandlerRef>;
-    if (t.type === 'edge' || t.type === 'throw' || t.type === 'finding') return label(t);
+    if (t.type === 'node') return model?.nodes.find((n) => n.id === t.id)?.kind === 'process' ? label(t) : <NodeRef id={t.id} label={label(t)} />;
+    if (t.type === 'edge' || t.type === 'throw' || t.type === 'finding' || t.type === 'run') return label(t);
     return <EventRef>{label(t)}</EventRef>;
   };
   const root = level.kind === 'handlers' ? index.processLabel.get(level.processId) ?? level.processId : 'Processes';
@@ -70,7 +79,6 @@ function Crumbs({ index }: { index: ReplayIndex }) {
 function Overview({ index }: { index: ReplayIndex }) {
   const model = useModel();
   const level = useStore((s) => s.level);
-  const selectIssue = useStore((s) => s.selectIssue);
   const window = useStore((s) => s.window);
   // Inside a process, the overview covers only the traffic that touches that process.
   const items = useMemo(() => {
@@ -90,26 +98,99 @@ function Overview({ index }: { index: ReplayIndex }) {
           <dt>Handlers</dt><dd>{index.recording.nodes.filter((n) => n.kind === 'handler').length}</dd>
           <dt>Templates</dt><dd>{index.recording.templates.length}</dd>
         </dl>
-        <p className="hint">Click a node or pathway to inspect it. Double-click a process to zoom in, or a handler to see its activity.</p>
+        <p className="hint">Click a node or pathway to inspect it. Double-click a process to zoom in. Click a handler to see its activity.</p>
       </Section>
-      <Section title="Notifications" aside={list.length}>
-        {list.length === 0 && <p className="hint">No throws or suspected corrupt payloads in this window.</p>}
+      <NotificationList index={index} title="Notifications" list={list} empty="No throws or suspected corrupt payloads in this window." />
+    </>
+  );
+}
+
+/** Throws and suspected corrupt payloads in the order given; clicking one inspects it. */
+function NotificationList({ index, title, list, empty }: { index: ReplayIndex; title: string; list: Notification[]; empty: string }) {
+  const selectAt = useStore((s) => s.selectAt);
+  return (
+    <Section title={title} aside={list.length}>
+      {list.length === 0 && <p className="hint">{empty}</p>}
+      <ul className="list">
+        {list.map((n) => (
+          <li key={`${n.kind}:${n.id}`}>
+            <button className={`row ${n.external ? 'row-high' : ''}`} onClick={() => selectAt({ type: n.kind, id: n.id }, n.occurrenceId)}>
+              <span className="row-head">
+                {n.kind === 'throw' ? <><Badge tone="error">✕ Error</Badge><ErrorId id={n.id} /></> : <Badge tone="warn">⚠ Corrupt Payload</Badge>}
+                <TierBadge tier={n.tier} />
+                {n.external && <Badge tone="external">EXTERNAL</Badge>}
+                <span className="muted">{fmtMs(n.rank.ts - index.start)}</span>
+              </span>
+              <span className="row-text">{n.finding ? <FindingSummary index={index} finding={n.finding} /> : n.text}</span>
+            </button>
+          </li>
+        ))}
+      </ul>
+    </Section>
+  );
+}
+
+/** How many notifications the event inspector lists, newest first. */
+const RECENT_NOTIFICATIONS = 20;
+
+/** A graph node by name: a handler links to its inspector, a process to the process node's. */
+function NodeName({ model, id }: { model: GraphModel; id: string }) {
+  const select = useStore((s) => s.select);
+  const m = model.nodes.find((n) => n.id === id);
+  const label = m?.label ?? id;
+  if (m?.kind === 'process' || m?.kind === 'stub') return <InspectLink label={label} onOpen={() => select({ type: 'node', id })}>{label}</InspectLink>;
+  return <HandlerLink id={id} label={label} />;
+}
+
+/** One kind of event across all of its templates: who fires it, the pathways it takes at this zoom level, and what has gone wrong with it. */
+function EventDetail({ index, id }: { index: ReplayIndex; id: string }) {
+  const model = useModel();
+  const window = useStore((s) => s.window);
+  const select = useStore((s) => s.select);
+  const ev = index.events.get(id);
+  const all = useMemo(() => index.items.filter((i) => eventKey(i.template) === id), [index, id]);
+  const items = useMemo(() => all.filter((i) => i.occ.ts >= window[0] && i.occ.ts <= window[1]), [all, window]);
+  const pathways = useMemo(() => {
+    if (!model) return [];
+    const fired = new Map<string, number>();
+    for (const i of items) {
+      for (const h of i.hops) {
+        const src = model.mapNode(h.src);
+        const dst = model.mapNode(h.dst);
+        if (src && dst && src !== dst) fired.set(edgeId(src, dst), (fired.get(edgeId(src, dst)) ?? 0) + 1);
+      }
+    }
+    return model.edges.filter((e) => fired.has(e.id)).map((edge) => ({ edge, n: fired.get(edge.id)! })).sort((a, b) => b.n - a.n);
+  }, [model, items]);
+  const recent = useMemo(() => notifications(index, items).sort((a, b) => b.rank.ts - a.rank.ts).slice(0, RECENT_NOTIFICATIONS), [index, items]);
+  if (!ev || !model) return <p className="hint">That event is no longer in the recording.</p>;
+  const shapes = [...new Set(all.map((i) => i.template.payloadShape))];
+  return (
+    <>
+      <Section title={<EventRef>{ev.label}</EventRef>} aside={<Badge tone="muted">event</Badge>}>
+        <dl className="facts">
+          <dt>Emitter</dt>
+          <dd><HandlerLink id={ev.emitterId} /></dd>
+          <dt>Fired</dt><dd>{items.length} in window ({all.length} total)</dd>
+          <dt>Payload</dt><dd>{shapes.map((s) => <code key={s} className="shape">{s}</code>)}</dd>
+        </dl>
+      </Section>
+      <Section title="Pathways" aside={pathways.length}>
+        {pathways.length === 0 && <p className="hint">None at this zoom level.</p>}
         <ul className="list">
-          {list.map((n) => (
-            <li key={`${n.kind}:${n.id}`}>
-              <button className={`row ${n.external ? 'row-high' : ''}`} onClick={() => selectIssue({ type: n.kind, id: n.id }, n.occurrenceId)}>
+          {pathways.map(({ edge, n }) => (
+            <li key={edge.id}>
+              <button className="row" title="Inspect pathway" onClick={() => select({ type: 'edge', id: edge.id })}>
                 <span className="row-head">
-                  {n.kind === 'throw' ? <Badge tone="error">✕ Error</Badge> : <Badge tone="warn">⚠ Corrupt Payload</Badge>}
-                  <TierBadge tier={n.tier} />
-                  {n.external && <Badge tone="external">EXTERNAL</Badge>}
-                  <span className="muted">{fmtMs(n.rank.ts - index.start)}</span>
+                  <span className="row-text"><NodeName model={model} id={edge.source} /> → <NodeName model={model} id={edge.target} /></span>
+                  <span className="muted">{n}×</span>
                 </span>
-                <span className="row-text">{n.finding ? <FindingSummary index={index} finding={n.finding} /> : n.text}</span>
               </button>
             </li>
           ))}
         </ul>
       </Section>
+      <NotificationList index={index} title="Recent notifications" list={recent} empty="No throws or suspected corrupt payloads for this event in this window." />
     </>
   );
 }
@@ -117,37 +198,164 @@ function Overview({ index }: { index: ReplayIndex }) {
 function NodeDetail({ index, id }: { index: ReplayIndex; id: string }) {
   const model = useModel();
   const window = useStore((s) => s.window);
-  const openActivity = useStore((s) => s.openActivity);
   const setLevel = useStore((s) => s.setLevel);
   const m = model?.nodes.find((n) => n.id === id);
   const items = useMemo(() => inWindow(index, window).filter((i) => i.hops.some((h) => model?.mapNode(h.dst) === id) || model?.mapNode(i.occ.sourceNodeId) === id), [index, window, model, id]);
+  const runs = useMemo(() => (m?.kind === 'handler' && m.rawId ? activityOf(index, window, m.rawId) : null), [index, window, m]);
   if (!m) return null;
-  const threw = items.reduce((n, i) => n + i.throws.filter((t) => model?.mapNode(t.handlerId) === id).length, 0);
-  const templates = new Map<string, { name: string; shape: string; n: number }>();
+  const handled = runs?.filter((r) => r.dir === 'handled') ?? [];
+  const avg = handled.length ? handled.reduce((n, r) => n + (r.ms ?? 0), 0) / handled.length : 0;
+  const threw = items.reduce((n, i) => n + i.throws.filter((t) => !t.rethrown && model?.mapNode(t.handlerId) === id).length, 0);
+  // An event can land in both lists when the node sends it to itself (or, for a process, between its own handlers).
+  const receiving = new Map<string, { key: string; shape: string; n: number }>();
+  const sending = new Map<string, { key: string; shape: string; n: number }>();
   for (const i of items) {
-    const e = templates.get(i.template.id) ?? { name: eventLabel(index, i), shape: i.template.payloadShape, n: 0 };
-    e.n++;
-    templates.set(i.template.id, e);
+    const lists = [];
+    if (i.hops.some((h) => model?.mapNode(h.dst) === id)) lists.push(receiving);
+    if (model?.mapNode(i.occ.sourceNodeId) === id) lists.push(sending);
+    for (const templates of lists) {
+      const e = templates.get(i.template.id) ?? { key: eventKey(i.template), shape: i.template.payloadShape, n: 0 };
+      e.n++;
+      templates.set(i.template.id, e);
+    }
   }
   return (
     <>
-      <Section title={m.kind === 'process' || m.kind === 'stub' ? m.label : <HandlerRef>{m.label}</HandlerRef>} aside={<Badge tone="muted">{m.kind}</Badge>}>
+      <Section title={m.kind === 'process' || m.kind === 'stub' ? m.label : <NodeRef id={m.id} label={m.label} />} aside={<Badge tone="muted">{m.kind}</Badge>}>
         <dl className="facts">
           <dt>Process</dt><dd>{index.processLabel.get(m.processId)}</dd>
           <dt>Traffic</dt><dd>{m.detail}</dd>
           <dt>Throws</dt><dd>{threw ? <Badge tone="error">✕ {threw}</Badge> : 'none'}</dd>
+          {runs && <><dt>Activity</dt><dd>handled {handled.length} · emitted {runs.length - handled.length} · avg {fmtMs(avg)}</dd></>}
         </dl>
-        {m.kind === 'handler' && m.rawId && <button className="primary" onClick={() => openActivity(m.rawId!)}>Open activity</button>}
         {(m.kind === 'process' || m.kind === 'stub') && <button className="primary" onClick={() => setLevel({ kind: 'handlers', processId: m.processId })}>Zoom into process</button>}
       </Section>
-      <Section title="Event templates" aside={templates.size}>
+      <TemplateList title="Receiving" templates={receiving} />
+      <TemplateList title="Sending" templates={sending} />
+      {runs && <ActivitySection index={index} runs={runs} window={window} />}
+    </>
+  );
+}
+
+/** What a handler did over time (handled above the line, emitted below), then its runs. Clean runs are hidden until asked for. */
+function ActivitySection({ index, runs, window }: { index: ReplayIndex; runs: Run[]; window: [number, number] }) {
+  const selectAt = useStore((s) => s.selectAt);
+  const t = useStore((s) => s.t);
+  const setT = useStore((s) => s.setT);
+  const scrubbing = useRef(false);
+  const [showAll, setShowAll] = useState(false);
+  const problems = useMemo(() => runs.filter((r) => isProblemRun(index, r)), [index, runs]);
+  const shown = showAll ? runs : problems;
+  const span = Math.max(window[1] - window[0], 1);
+  // The timeline spans the replay window, so a pointer position maps straight to a time inside it.
+  const scrub = (e: React.PointerEvent<SVGSVGElement>) => {
+    const r = e.currentTarget.getBoundingClientRect();
+    setT(window[0] + Math.min(Math.max((e.clientX - r.left) / r.width, 0), 1) * span);
+  };
+  return (
+    <Section title="Activity" aside={showAll ? runs.length : `${problems.length} of ${runs.length}`}>
+      <svg
+        className="mini"
+        viewBox="0 0 1000 24"
+        preserveAspectRatio="none"
+        role="slider"
+        tabIndex={0}
+        aria-label="Replay position"
+        aria-valuemin={0}
+        aria-valuemax={Math.round(span)}
+        aria-valuenow={Math.round(Math.min(Math.max(t - window[0], 0), span))}
+        onPointerDown={(e) => { scrubbing.current = true; e.currentTarget.setPointerCapture(e.pointerId); scrub(e); }}
+        onPointerMove={(e) => { if (scrubbing.current) scrub(e); }}
+        onPointerUp={() => { scrubbing.current = false; }}
+        onPointerCancel={() => { scrubbing.current = false; }}
+        onKeyDown={(e) => {
+          if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
+          e.preventDefault();
+          setT(Math.min(Math.max(t + (e.key === 'ArrowRight' ? 1 : -1) * span / 100, window[0]), window[1]));
+        }}
+      >
+        {runs.map((r) => {
+          const cls = r.error ? 'dot-error' : index.findingsByOcc.has(r.item.occ.id) ? 'dot-warn' : r.dir === 'handled' ? 'dot-in' : 'dot-out';
+          return <circle key={r.id} cx={((r.item.occ.ts - window[0]) / span) * 1000} cy={r.dir === 'handled' ? 8 : 17} r={3} className={cls} />;
+        })}
+        {t >= window[0] && t <= window[1] && <line x1={((t - window[0]) / span) * 1000} x2={((t - window[0]) / span) * 1000} y1={0} y2={24} className="mini-playhead" />}
+      </svg>
+      {runs.length === 0
+        ? <p className="hint">This handler did nothing in the selected window.</p>
+        : <CleanToggle shown={problems.length} total={runs.length} noun="runs" checked={showAll} onChange={setShowAll} empty="No throws or suspected corrupt payloads in this window." />}
+      <ul className="list">
+        {shown.slice(0, 200).map((r) => (
+          <li key={r.id}>
+            <button className="row" onClick={() => {
+              // A run that threw is best explained by its error.
+              const thrown = r.error ? throwIdFor(index, r.item.occ.id, r.nodeId) : null;
+              selectAt(thrown ? { type: 'throw', id: thrown } : { type: 'run', id: r.id }, r.item.occ.id);
+            }}>
+              <span className="row-head">
+                {r.error && <Badge tone="error">{r.downstream ? '✕ Downstream Error' : '✕ Error'}</Badge>}
+                {r.error && <ErrorId id={throwIdFor(index, r.item.occ.id, r.nodeId) ?? throwId(r.item.occ.id, r.nodeId)} />}
+                {index.findingsByOcc.has(r.item.occ.id) && <Badge tone="warn">⚠ Corrupt Payload</Badge>}
+                <span className="muted">{fmtMs(r.item.occ.ts - index.start)}</span>
+              </span>
+              <span className="row-text"><EventLink id={eventKey(r.item.template)} /></span>
+              {r.error && <span className="run-error" title={r.error}>{r.error}</span>}
+            </button>
+          </li>
+        ))}
+      </ul>
+    </Section>
+  );
+}
+
+/** "Show clean …" checkbox for a list that defaults to its problem entries, with the hint for when there are none. */
+function CleanToggle({ shown, total, noun, checked, onChange, empty }: { shown: number; total: number; noun: string; checked: boolean; onChange(v: boolean): void; empty: string }) {
+  return (
+    <>
+      {shown < total && (
+        <label className="checkbox">
+          <input type="checkbox" checked={checked} onChange={(e) => onChange(e.target.checked)} />
+          Show clean {noun} ({total - shown})
+        </label>
+      )}
+      {!checked && shown === 0 && <p className="hint">{empty}</p>}
+    </>
+  );
+}
+
+/** One run of a handler: what the activity log shows for a row, plus the payload it received. */
+function RunDetail({ index, id }: { index: ReplayIndex; id: string }) {
+  const run = runById(index, id);
+  const p = parseRunId(index, id);
+  if (!run || !p) return <p className="hint">That run is no longer in the recording.</p>;
+  const { item, dir, ms, error } = run;
+  const findings = index.findingsByOcc.get(item.occ.id);
+  return (
+    <>
+      <Section title={<><HandlerLink id={p.nodeId} during={dir === 'handled' ? item.occ.id : undefined} /> {dir}</>} aside={findings?.length ? <FindingBadges findings={findings} /> : undefined}>
+        <dl className="facts">
+          <dt>At</dt><dd>{fmtMs(item.occ.ts - index.start)}</dd>
+          <dt>Event</dt><dd><EventLink id={eventKey(item.template)} /></dd>
+          <dt>Took</dt><dd>{ms !== undefined ? fmtMs(ms) : '—'}</dd>
+          <dt>Result</dt><dd>{error ? <><span className="err">✕ {error}</span> <ErrorId id={throwIdFor(index, item.occ.id, p.nodeId) ?? throwId(item.occ.id, p.nodeId)} /></> : dir === 'handled' ? 'ok' : '—'}</dd>
+        </dl>
+        <div className="chain" aria-label="Call chain"><CallChain index={index} occurrenceId={item.occ.id} /></div>
+      </Section>
+      <PayloadSection item={item} findings={findings} />
+    </>
+  );
+}
+
+function TemplateList({ title, templates }: { title: string; templates: Map<string, { key: string; shape: string; n: number }> }) {
+  return (
+    <Section title={title} aside={templates.size}>
+      {templates.size === 0 ? <p className="muted">none in this window</p> : (
         <ul className="list">
           {[...templates.values()].map((t) => (
-            <li key={t.name + t.shape} className="tpl"><strong><EventRef>{t.name}</EventRef></strong><code>{t.shape}</code><span className="muted">{t.n}×</span></li>
+            <li key={t.key + t.shape} className="tpl"><strong><EventLink id={t.key} /></strong><code>{t.shape}</code><span className="muted">{t.n}×</span></li>
           ))}
         </ul>
-      </Section>
-    </>
+      )}
+    </Section>
   );
 }
 
@@ -162,26 +370,19 @@ function EdgeDetail({ index, id }: { index: ReplayIndex; id: string }) {
     () => (model ? inWindow(index, window).filter((i) => i.hops.some((h) => `${model.mapNode(h.src)}>${model.mapNode(h.dst)}` === id)) : []),
     [index, window, model, id],
   );
-  // Clean emissions are hidden until asked for, so throws and suspect payloads aren't buried.
+  // Only suspect payloads show until asked for. A throw on the receiving end says nothing about the payload itself.
   const [showAll, setShowAll] = useState(false);
-  const problems = useMemo(() => items.filter((i) => i.throws.length > 0 || index.findingsByOcc.has(i.occ.id)), [items, index]);
+  const problems = useMemo(() => items.filter((i) => index.findingsByOcc.has(i.occ.id)), [items, index]);
   if (!edge || !model) return null;
-  const label = (nid: string) => model.nodes.find((n) => n.id === nid)?.label ?? nid;
   const shown = showAll ? items : problems;
   return (
     <>
       <Section title="Pathway">
-        <p className="route"><button className="link" onClick={() => select({ type: 'node', id: edge.source })}><HandlerRef>{label(edge.source)}</HandlerRef></button> → <button className="link" onClick={() => select({ type: 'node', id: edge.target })}><HandlerRef>{label(edge.target)}</HandlerRef></button></p>
-        <dl className="facts"><dt>Events</dt><dd>{edge.events.map((e, k) => <span key={e}>{k > 0 && ', '}<EventRef>{e}</EventRef></span>)}</dd><dt>Fired</dt><dd>{countFired(edge.times, t, window[1])} of {edge.count}×</dd></dl>
+        <p className="route"><NodeName model={model} id={edge.source} /> → <NodeName model={model} id={edge.target} /></p>
+        <dl className="facts"><dt>Events</dt><dd>{edge.events.map((e, k) => <span key={e}>{k > 0 && ', '}<EventLink id={e} /></span>)}</dd><dt>Fired</dt><dd>{countFired(edge.times, t, window[1])} of {edge.count}×</dd></dl>
       </Section>
       <Section title="Payloads" aside={showAll ? items.length : `${problems.length} of ${items.length}`}>
-        {problems.length < items.length && (
-          <label className="checkbox">
-            <input type="checkbox" checked={showAll} onChange={(e) => setShowAll(e.target.checked)} />
-            Show clean payloads ({items.length - problems.length})
-          </label>
-        )}
-        {!showAll && problems.length === 0 && <p className="hint">No throws or suspected corrupt payloads on this pathway in this window.</p>}
+        <CleanToggle shown={problems.length} total={items.length} noun="payloads" checked={showAll} onChange={setShowAll} empty="No suspected corrupt payloads on this pathway in this window." />
         <ul className="list">
           {shown.slice(0, 200).map((i) => {
             const flagged = index.findingsByOcc.has(i.occ.id);
@@ -189,7 +390,8 @@ function EdgeDetail({ index, id }: { index: ReplayIndex; id: string }) {
               <li key={i.occ.id}>
                 <button className="row" onClick={() => seek(i.occ.id)}>
                   <span className="row-head">
-                    {i.throws.length > 0 && <Badge tone="error">✕ Error</Badge>}
+                    {i.throws.length > 0 && <Badge tone="error">{i.throws.every((th) => th.rethrown) ? '✕ Downstream Error' : '✕ Error'}</Badge>}
+                    {i.throws.map((th) => <ErrorId key={th.handlerId} id={th.id} />)}
                     {flagged && <Badge tone="warn">⚠ Corrupt Payload</Badge>}
                     <span className="muted">{fmtMs(i.occ.ts - index.start)}</span>
                   </span>
@@ -213,7 +415,7 @@ export function OccurrenceDetail({ index, id }: { index: ReplayIndex; id: string
   if (index.findingsByOcc.has(id)) return <CorruptPayloadDetail index={index} occurrenceId={id} />;
   return (
     <>
-      <Section title={<EventRef>{eventLabel(index, item)}</EventRef>} aside={<CaptureBadge occ={item.occ} />}>
+      <Section title={<EventLink id={eventKey(item.template)} />} aside={<CaptureBadge occ={item.occ} />}>
         <EventFacts index={index} item={item} />
       </Section>
       <PayloadSection item={item} />
@@ -221,15 +423,11 @@ export function OccurrenceDetail({ index, id }: { index: ReplayIndex; id: string
   );
 }
 
-/** When and where an event happened, who handled it, and the events that led to it. */
-function EventFacts({ index, item }: { index: ReplayIndex; item: IndexedOccurrence }) {
+/** When and where an event happened, who handled it, and (unless `chain` is false) the events that led to it. */
+function EventFacts({ index, item, chain: showChain = true }: { index: ReplayIndex; item: IndexedOccurrence; chain?: boolean }) {
   const seek = useStore((s) => s.seekToOccurrence);
-  const focusNode = useStore((s) => s.focusNode);
   const chain = chainOf(index, item.occ.id);
-  const nodeLabel = (nid: string) => index.nodes.get(nid)?.label ?? nid;
-  const showNode = (nid: string) => (
-    <button className="link" title="Show on graph" onClick={() => focusNode(nid)}><HandlerRef>{nodeLabel(nid)}</HandlerRef></button>
-  );
+  const showNode = (nid: string) => <HandlerLink id={nid} />;
   const results = item.occ.handlerResults;
   return (
     <>
@@ -242,22 +440,22 @@ function EventFacts({ index, item }: { index: ReplayIndex; item: IndexedOccurren
           <ul className="handler-list">
             {results.map((r, k) => (
               <li key={k}>
-                {showNode(r.handlerId)}
-                {r.error && <span className="err"> ✕ {r.error.name}: {r.error.message}</span>}
+                <HandlerLink id={r.handlerId} during={item.occ.id} />
+                {r.error && <><span className="err"> ✕ {r.error.name}: {r.error.message}</span> <ErrorId id={throwIdFor(index, item.occ.id, r.handlerId) ?? throwId(item.occ.id, r.handlerId)} /></>}
               </li>
             ))}
           </ul>
         </dd>
         <dt>Causality</dt><dd>{item.occ.causality}</dd>
       </dl>
-      <div className="chain" aria-label="Causal chain">
+      {showChain && <div className="chain" aria-label="Causal chain">
         {chain.map((c, k) => (
           <span key={c.occ.id}>
             {k > 0 && <span className="muted"> ▸ </span>}
             <button className={`link ${c.occ.id === item.occ.id ? 'current' : ''}`} onClick={() => seek(c.occ.id)}><EventRef>{eventLabel(index, c)}</EventRef></button>
           </span>
         ))}
-      </div>
+      </div>}
     </>
   );
 }
@@ -301,7 +499,7 @@ function TierBadge({ tier }: { tier: Tier }) {
 
 /** Where payloads went, external systems first. Clicking a row shows that recipient on the graph. */
 function Recipients({ index, findings }: { index: ReplayIndex; findings: Finding[] }) {
-  const focusNode = useStore((s) => s.focusNode);
+  const inspectNode = useStore((s) => s.inspectNode);
   const recipients = recipientsOf(index, findings);
   return (
     <Section title="Recipients" aside={recipients.length}>
@@ -311,10 +509,10 @@ function Recipients({ index, findings }: { index: ReplayIndex; findings: Finding
           const nodeId = r.nodeId;
           return (
             <li key={`${r.external}:${r.label}`}>
-              <button className={`row ${r.external ? 'row-high' : ''}`} disabled={!nodeId} title="Show on graph" onClick={() => nodeId && focusNode(nodeId)}>
+              <button className={`row ${r.external ? 'row-high' : ''}`} disabled={!nodeId} title="Inspect and show on graph" onClick={() => nodeId && inspectNode(nodeId)}>
                 <span className="row-head">
                   {r.external ? <Badge tone="external">EXTERNAL</Badge> : <Badge tone="muted">internal</Badge>}
-                  <span className="row-text">{r.external ? r.label : <HandlerRef>{r.label}</HandlerRef>}</span>
+                  <span className="row-text">{nodeId ? <NodeRef id={nodeId} label={r.label} /> : r.label}</span>
                   <span className="muted">{r.count} corrupted payload{r.count === 1 ? '' : 's'}</span>
                 </span>
               </button>
@@ -329,17 +527,18 @@ function Recipients({ index, findings }: { index: ReplayIndex; findings: Finding
 /** A handler failure and everything it is suspected of corrupting. */
 function ErrorDetail({ index, id }: { index: ReplayIndex; id: string }) {
   const seek = useStore((s) => s.seekToOccurrence);
-  const selectIssue = useStore((s) => s.selectIssue);
+  const selectAt = useStore((s) => s.selectAt);
   const src = parseThrowId(index, id);
   const item = src && index.byId.get(src.occurrenceId);
   if (!src || !item) return <p className="hint">That error is no longer in the recording.</p>;
   const thrown = item.throws.find((t) => t.handlerId === src.handlerId);
   const tainted = index.findingsBySource.get(id) ?? [];
+  const propagated = index.propagations.get(id) ?? [];
   const external = tainted.filter((f) => f.priority === 'high').length;
   const rank = notifications(index, [item]).find((n) => n.id === id)?.tier;
   return (
     <>
-      <Section title={<><HandlerRef>{index.nodes.get(src.handlerId)?.label ?? src.handlerId}</HandlerRef> {thrown ? 'threw' : 'reported an error'}</>} aside={rank && <TierBadge tier={rank} />}>
+      <Section title={<><ErrorId id={id} /> <HandlerLink id={src.handlerId} /> {thrown ? 'threw' : 'reported an error'}</>} aside={rank && <TierBadge tier={rank} />}>
         <dl className="facts">
           {thrown && <><dt>Error</dt><dd>{thrown.message}</dd></>}
           <dt>At</dt><dd>{fmtMs((thrown?.at ?? item.occ.ts) - index.start)}</dd>
@@ -349,13 +548,28 @@ function ErrorDetail({ index, id }: { index: ReplayIndex; id: string }) {
         </dl>
         {tainted.length === 0 && <p className="hint">No payload sent after this error has been flagged as corrupt.</p>}
       </Section>
+      {propagated.length > 0 && (
+        <Section title="Propagated through" aside={propagated.length}>
+          <ul className="list">
+            {propagated.map((p) => {
+              const at = index.byId.get(p.occurrenceId);
+              return (
+                <li key={`${p.occurrenceId}|${p.handlerId}`} className="tpl">
+                  <HandlerLink id={p.handlerId} during={p.occurrenceId} />
+                  {at && <EventLink id={eventKey(at.template)} />}
+                </li>
+              );
+            })}
+          </ul>
+        </Section>
+      )}
       {tainted.length > 0 && <Recipients index={index} findings={tainted} />}
       {tainted.length > 0 && (
         <Section title="Corrupted payloads" aside={tainted.length}>
           <ul className="list">
             {tainted.map((f) => (
               <li key={f.id}>
-                <button className={`row ${f.priority === 'high' ? 'row-high' : ''}`} onClick={() => selectIssue({ type: 'finding', id: f.id }, f.occurrenceId)}>
+                <button className={`row ${f.priority === 'high' ? 'row-high' : ''}`} onClick={() => selectAt({ type: 'finding', id: f.id }, f.occurrenceId)}>
                   <span className="row-head">
                     <Badge tone="warn">⚠ Corrupt Payload</Badge>
                     {f.priority === 'high' && <Badge tone="external">EXTERNAL</Badge>}
@@ -384,7 +598,7 @@ function FindingSelection({ index, id }: { index: ReplayIndex; id: string }) {
  * where it went.
  */
 function CorruptPayloadDetail({ index, occurrenceId }: { index: ReplayIndex; occurrenceId: string }) {
-  const selectIssue = useStore((s) => s.selectIssue);
+  const selectAt = useStore((s) => s.selectAt);
   const item = index.byId.get(occurrenceId);
   const findings = index.findingsByOcc.get(occurrenceId) ?? [];
   if (!item || findings.length === 0) return <p className="hint">That payload is no longer in the recording.</p>;
@@ -400,8 +614,8 @@ function CorruptPayloadDetail({ index, occurrenceId }: { index: ReplayIndex; occ
             const sourceItem = index.byId.get(source.occurrenceId);
             const message = sourceItem?.throws.find((t) => t.handlerId === source.handlerId)?.message;
             return sourceItem ? (
-              <button key={id} className="link source-error" onClick={() => selectIssue({ type: 'throw', id }, source.occurrenceId)}>
-                <HandlerRef>{index.nodes.get(source.handlerId)?.label ?? source.handlerId}</HandlerRef> {message ? `threw: ${message}` : 'reported an error'} →
+              <button key={id} className="link source-error" onClick={() => selectAt({ type: 'throw', id }, source.occurrenceId)}>
+                <ErrorId id={id} /> <NodeRef id={source.handlerId} /> {message ? `threw: ${message}` : 'reported an error'} →
               </button>
             ) : (
               <p key={id} className="hint">The source error is no longer in the recording.</p>
@@ -409,7 +623,7 @@ function CorruptPayloadDetail({ index, occurrenceId }: { index: ReplayIndex; occ
           })}
         </Section>
       )}
-      <Section title={<EventRef>{eventLabel(index, item)}</EventRef>} aside={tier && <TierBadge tier={tier} />}>
+      <Section title={<EventLink id={eventKey(item.template)} />} aside={tier && <TierBadge tier={tier} />}>
         <div className="row-badges">
           <Badge tone="warn">⚠ Corrupt Payload</Badge>
           {external.length > 0 && <Badge tone="external" title={external.join(', ')}>EXTERNAL · {external.join(', ')}</Badge>}
@@ -417,7 +631,11 @@ function CorruptPayloadDetail({ index, occurrenceId }: { index: ReplayIndex; occ
           {findings.some((f) => f.basis === 'shape') && <Badge tone="muted">shape comparison only</Badge>}
           {findings.some((f) => f.retroactive) && <Badge tone="muted">found after the fact</Badge>}
         </div>
-        <EventFacts index={index} item={item} />
+        {/* Findings on one event differ only in what was flagged, so they share a chain unless traced to different throws. */}
+        {[...new Map(findings.map((f) => [f.taintSource?.handlerId, f])).values()].map((f) => (
+          <p key={f.id} className="finding-chain"><FindingChain index={index} finding={f} /></p>
+        ))}
+        <EventFacts index={index} item={item} chain={false} />
       </Section>
       <PayloadSection item={item} findings={findings} />
     </>

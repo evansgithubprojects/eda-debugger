@@ -1,5 +1,4 @@
 import { useEffect, useState } from 'react';
-import { ActivityView } from './components/ActivityView';
 import { GraphView } from './components/GraphView';
 import { Inspector } from './components/Inspector';
 import { Timeline } from './components/Timeline';
@@ -10,7 +9,6 @@ import { useStore } from './store';
 
 export function App() {
   const index = useStore((s) => s.index);
-  const activityNodeId = useStore((s) => s.activityNodeId);
   const [error, setError] = useState<string | null>(null);
   const [dragging, setDragging] = useState(false);
   usePlayback();
@@ -44,7 +42,7 @@ export function App() {
       {index ? (
         <>
           <div className="main">
-            <div className="canvas">{activityNodeId ? <ActivityView nodeId={activityNodeId} /> : <GraphView />}</div>
+            <div className="canvas"><GraphView /></div>
             <Inspector />
           </div>
           <Timeline />

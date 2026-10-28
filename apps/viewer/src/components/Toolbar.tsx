@@ -29,31 +29,12 @@ export async function loadFile(file: File): Promise<string | null> {
 export function Toolbar({ onError }: { onError: (msg: string | null) => void }) {
   const input = useRef<HTMLInputElement>(null);
   const [url, setUrl] = useState('http://127.0.0.1:7777');
-  const { index, level, activityNodeId, sourceName, live } = useStore();
-  const { setLevel, closeActivity, connectLive, disconnectLive } = useStore.getState();
-  const processLabel = level.kind === 'handlers' ? index?.processLabel.get(level.processId) : undefined;
-  const activityLabel = activityNodeId ? index?.nodes.get(activityNodeId)?.label : undefined;
+  const { sourceName, live } = useStore();
+  const { connectLive, disconnectLive } = useStore.getState();
 
   return (
     <header className="toolbar">
       <h1>Event Chain Debugger</h1>
-      {index && (
-        <nav className="crumbs" aria-label="Zoom level">
-          <button className={level.kind === 'process' && !activityNodeId ? 'current' : ''} onClick={() => setLevel({ kind: 'process' })}>Processes</button>
-          {processLabel && (
-            <>
-              <span>›</span>
-              <button className={!activityNodeId ? 'current' : ''} onClick={closeActivity}>{processLabel}</button>
-            </>
-          )}
-          {activityLabel && (
-            <>
-              <span>›</span>
-              <button className="current">{activityLabel}</button>
-            </>
-          )}
-        </nav>
-      )}
       <span className="spacer" />
       {sourceName && <span className="muted source">{sourceName}</span>}
       <input

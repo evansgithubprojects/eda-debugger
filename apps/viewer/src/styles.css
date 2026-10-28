@@ -29,6 +29,8 @@ button:focus-visible, select:focus-visible, input:focus-visible { outline: 2px s
 button.primary { background: #1f5f84; border-color: #2b87b8; }
 button.link { background: none; border: 0; padding: 0; color: var(--accent); text-decoration: underline; }
 button.link.current { color: var(--text); text-decoration: none; font-weight: 600; }
+.event-link { color: var(--accent); text-decoration: underline; cursor: pointer; }
+.event-link:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 button.icon { margin-left: auto; padding: 0 8px; border: 0; background: none; font-size: 18px; }
 input, select { background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 5px 8px; }
 code, pre { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
@@ -45,6 +47,7 @@ code, pre { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-si
 .crumbs { display: flex; align-items: center; gap: 6px; color: var(--muted); }
 .crumbs button { background: none; border: 0; padding: 2px 4px; color: var(--accent); }
 .crumbs button.current { color: var(--text); font-weight: 600; }
+.zoom-crumbs { position: absolute; top: 10px; left: 50%; transform: translateX(-50%); z-index: 5; padding: 3px 10px; background: var(--panel); border: 1px solid var(--border); border-radius: 999px; }
 .live-box { display: inline-flex; gap: 6px; }
 .banner { background: #4a1f26; border-bottom: 1px solid var(--error); padding: 8px 14px; }
 
@@ -95,17 +98,15 @@ code, pre { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-si
   box-shadow: 0 0 calc(var(--lit, 0) * 18px) calc(var(--lit, 0) * 3px) rgb(76 194 255 / calc(var(--lit, 0) * .7)); border-color: color-mix(in srgb, var(--accent) calc(var(--lit, 0) * 100%), var(--border)); }
 .node-card.kind-process { background: #1a2433; }
 .node-card.kind-emitter { border-style: dashed; }
-.node-card.kind-stub { opacity: .75; border-style: dotted; }
+/* Dimmed with colour, not opacity: pathways run a little under their cards and must not show through. */
+.node-card.kind-stub { border-style: dotted; background: color-mix(in srgb, var(--panel-2) 75%, var(--bg)); }
+.node-card.kind-stub .node-title, .node-card.kind-stub .node-detail { opacity: .75; }
 .node-card.selected { outline: 2px solid var(--accent); outline-offset: 2px; }
 .node-card.has-thrown { border-color: var(--error); box-shadow: inset 0 0 0 1px var(--error); }
-.node-card.has-flagged:not(.has-thrown) { border-color: var(--warn-dim); }
 .node-title { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .node-detail { font-size: 11px; color: var(--muted); }
 .corner { position: absolute; top: -9px; right: 8px; font-size: 11px; font-weight: 700; padding: 2px 6px; border-radius: 999px; }
 .corner-error { background: var(--error); color: #fff; }
-.corner-warn { background: var(--warn); color: #1c1300; right: auto; left: 8px; }
-.corner-warn.high { background: var(--error); color: #fff; }
-.node-card.has-thrown .corner-warn { left: 8px; }
 
 /* flash on throw: red pulse that fades back to the persistent indicator */
 .node-card.flash { animation: flash-red .9s ease-out; }
@@ -114,9 +115,7 @@ code, pre { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-si
   60% { box-shadow: 0 0 0 10px rgb(255 77 94 / .25), 0 0 22px 4px rgb(255 77 94 / .5); background: #4a1a21; }
   100% { box-shadow: inset 0 0 0 1px var(--error); background: var(--panel-2); }
 }
-.edge-flash { animation: flash-edge .9s ease-out; }
-@keyframes flash-edge { 0%, 40% { stroke-width: 7; } 100% { stroke-width: 2; } }
-@media (prefers-reduced-motion: reduce) { .node-card.flash, .edge-flash { animation: none; background: #6a1822; } }
+@media (prefers-reduced-motion: reduce) { .node-card.flash { animation: none; background: #6a1822; } }
 
 /* zoom transitions: two stacked layers, the parent grows and fades to uncover the child underneath */
 .graph-stack { position: absolute; inset: 0; overflow: hidden; }
@@ -124,13 +123,9 @@ code, pre { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-si
 .graph-layer.animating { pointer-events: none; will-change: transform, opacity; }
 .ring-node { box-sizing: border-box; border: 1.5px solid var(--border); border-radius: 50%; background: rgb(26 36 51 / .45); pointer-events: none; display: flex; justify-content: center; }
 .ring-node span { margin-top: 10px; font-size: 12px; font-weight: 600; color: var(--muted); }
-.activity-enter { animation: activity-enter .25s ease-out both; }
-@keyframes activity-enter { from { opacity: 0; transform: scale(.96); } to { opacity: 1; transform: scale(1); } }
-@media (prefers-reduced-motion: reduce) { .activity-enter { animation: none; } }
 
 .edge-label { position: absolute; pointer-events: all; display: flex; gap: 4px; font-size: 11px; background: var(--bg); border: 1px solid var(--border); border-radius: 999px; padding: 1px 6px; }
 .edge-label.selected { border-color: var(--accent); }
-.mark-error { color: var(--error); font-weight: 700; }
 .mark-warn { color: var(--warn); font-weight: 700; }
 .react-flow__edge { cursor: pointer; }
 
@@ -159,20 +154,10 @@ code, pre { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-si
 .toast-head { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 .toast p { margin: 8px 0; font-size: 12.5px; overflow-wrap: anywhere; }
 
-/* activity */
-.activity { height: 100%; display: flex; flex-direction: column; padding: 12px 16px; gap: 10px; min-height: 0; }
-.activity header { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
-.activity h2 { margin: 0; font-size: 17px; }
-.mini { width: 100%; height: 34px; background: var(--panel); border: 1px solid var(--border); border-radius: 6px; }
+.run-error { color: #ff8a96; font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mini { cursor: ew-resize; touch-action: none; width: 100%; height: 34px; background: var(--panel); border: 1px solid var(--border); border-radius: 6px; }
+.mini-playhead { stroke: #fff; stroke-width: 1; vector-effect: non-scaling-stroke; pointer-events: none; }
 .dot-in { fill: var(--accent); } .dot-out { fill: #8f7bff; } .dot-error { fill: var(--error); } .dot-warn { fill: var(--warn); }
-.table-wrap { flex: 1; overflow: auto; min-height: 0; border: 1px solid var(--border); border-radius: 6px; }
-.activity-table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
-.activity-table th { position: sticky; top: 0; background: var(--panel-2); text-align: left; padding: 6px 8px; z-index: 1; }
-.activity-table td { padding: 6px 8px; border-top: 1px solid var(--border); vertical-align: top; }
-.activity-table tbody tr { cursor: pointer; }
-.activity-table tbody tr:hover { background: var(--panel); }
-.activity-table .row-error { background: #2a1519; }
-.activity-table .json { max-height: 120px; }
 
 @media (max-width: 800px) {
   .main { flex-direction: column; }
@@ -182,18 +167,33 @@ code, pre { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-si
 .toast-more { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 6px 10px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--panel-2); font-size: 12.5px; }
 
 .entity-ref { display: inline-flex; align-items: center; gap: 5px; }
+.node-scope { color: var(--muted); font-weight: 400; }
 .entity-icon { flex: none; fill: none; stroke-width: 1.4; stroke-linejoin: round; stroke-linecap: round; }
 .entity-event { stroke: var(--event); fill: color-mix(in srgb, var(--event) 35%, transparent); }
 .entity-handler { stroke: var(--handler); fill: color-mix(in srgb, var(--handler) 25%, transparent); }
+.entity-external { stroke: var(--error); fill: color-mix(in srgb, var(--error) 25%, transparent); }
+.entity-icon-wrap { display: inline-flex; flex: none; cursor: help; }
+.entity-tip { position: fixed; z-index: 1000; transform: translate(-50%, calc(-100% - 6px)); pointer-events: none; white-space: nowrap; font-size: 11px; font-weight: 600; padding: 2px 7px; border-radius: 4px; background: var(--panel-2); border: 1px solid var(--border); }
+.entity-tip-event { color: var(--event); }
+.entity-tip-handler { color: var(--handler); }
+.entity-tip-external { color: var(--error); }
 .call-chain { line-height: 1.8; }
 .call-chain .current-step { font-weight: 600; }
 
 .source-error { text-align: left; line-height: 1.5; }
 .row:disabled { cursor: default; opacity: .7; }
 .finding-summary { display: flex; flex-direction: column; gap: 3px; }
-.finding-summary .flagged { display: block; white-space: pre-wrap; padding: 4px 8px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--panel-2); }
+.finding-chain { margin: 8px 0; }
+.finding-recipients { color: var(--muted); font-size: 11.5px; }
+.finding-summary .flagged { display: block; align-self: flex-start; max-width: 100%; white-space: pre-wrap; padding: 4px 8px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--panel-2); }
+.error-id { font-size: 11px; font-weight: 600; letter-spacing: .03em; padding: 0 5px; border-radius: 4px; color: #ff8a96; background: color-mix(in srgb, var(--error) 14%, transparent); border: 1px solid color-mix(in srgb, var(--error) 45%, transparent); white-space: nowrap; }
 .chain-error { color: #ff8a96; font-weight: 700; }
 .node-card.focused { animation: focus-pulse 1.6s ease-out; }
+.edge-label.focused { animation: focus-pulse 1.6s ease-out; }
+.edge-focused { animation: edge-focus-pulse 1.6s ease-out; }
+@keyframes edge-focus-pulse {
+  0%, 40% { stroke: var(--accent); stroke-width: 6px; opacity: 1; }
+}
 @keyframes focus-pulse {
   0%, 40% { box-shadow: 0 0 0 4px var(--accent); }
   100% { box-shadow: 0 0 0 0 transparent; }

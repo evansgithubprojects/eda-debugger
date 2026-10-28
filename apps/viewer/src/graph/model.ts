@@ -1,5 +1,5 @@
 import type { IndexedOccurrence, MapNode, ReplayIndex } from '../replay';
-import { edgeId } from '../replay';
+import { edgeId, eventKey } from '../replay';
 
 /** process = zoomed out; handlers = inside one process. (The activity view is a separate screen.) */
 export type Level = { kind: 'process' } | { kind: 'handlers'; processId: string };
@@ -23,6 +23,7 @@ export interface ModelEdge {
   count: number;
   /** Timestamp of every hop on this route, ascending, so a count at any playhead position is a binary search. */
   times: number[];
+  /** `eventKey`s of the events that used this route, by label. */
   events: string[];
 }
 
@@ -60,7 +61,7 @@ export function buildModel(index: ReplayIndex, level: Level, items: IndexedOccur
       const e = edges.get(id) ?? { id, source: src, target: dst, count: 0, times: [], events: [], names: new Set<string>() };
       e.count++;
       e.times.push(item.occ.ts);
-      e.names.add(item.template.eventName);
+      e.names.add(eventKey(item.template));
       edges.set(id, e);
     }
   }
@@ -90,7 +91,7 @@ export function buildModel(index: ReplayIndex, level: Level, items: IndexedOccur
 
   return {
     nodes,
-    edges: [...edges.values()].map(({ names, ...e }) => ({ ...e, events: [...names].sort() })),
+    edges: [...edges.values()].map(({ names, ...e }) => ({ ...e, events: [...names].sort((a, b) => (index.events.get(a)?.label ?? a).localeCompare(index.events.get(b)?.label ?? b)) })),
     mapNode,
   };
 }
