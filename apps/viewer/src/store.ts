@@ -106,8 +106,6 @@ interface State {
   dismissToast(id: number): void;
   /** Inspects a handler: zooms into its process if needed, selects it and pans the graph to it. */
   inspectNode(rawNodeId: string): void;
-  /** Pans the graph to a pathway at the current zoom level and highlights it. */
-  focusEdge(edgeId: string): void;
   dismissAllToasts(): void;
   connectLive(url: string): void;
   disconnectLive(): void;
@@ -257,7 +255,6 @@ export const useStore = create<State>()((set, get) => {
     dismissToast(id) { set((s) => ({ toasts: s.toasts.filter((t) => t.id !== id) })); },
     dismissAllToasts() { set({ toasts: [] }); },
     inspectNode(nodeId) { reveal({ type: 'node', id: nodeId }); },
-    focusEdge(edgeId) { setFocus({ edgeId }); },
 
     connectLive(url) {
       get().disconnectLive();
